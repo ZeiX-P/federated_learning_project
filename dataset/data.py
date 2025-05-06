@@ -56,7 +56,7 @@ class Dataset:
                                 shuffle=True, num_workers=2)
         return dataloader
     
-    def idd_data(self, dataset: Dataset, num_clients: int) -> Dict[int, List[int]]:
+    def idd_split(self, dataset: Dataset, num_clients: int) -> Dict[int, List[int]]:
 
         """
         Create a list of indices for each client
@@ -85,22 +85,29 @@ class Dataset:
                 indices_clients[random.randrange(num_clients)].append(remaining_indices[i])
 
         return indices_clients
+  
+    def dirichlet_non_iid_split(self, dataset: Dataset, num_clients, alpha=0.5, seed=42):
+        np.random.seed(seed)
+ 
+        client_data = {}
 
+        # Group indices of each class
+        class_indices = {}
+        for idx, (_, label) in enumerate(dataset):
+            class_indices[label].append(idx)
 
+        labels_classes = np.unique(list(class_indices.keys()))
 
-    
-    def non_idd_data(self, dataset: Dataset, num_clients: int) -> List[int]:
-        """
-        Create a list of dataloaders for each client
-        """
-        data_per_client = len(dataset) // num_clients
-        data_loaders = []
-        
-        for i in range(num_clients):
-            start = i * data_per_client
-            end = (i + 1) * data_per_client if i != num_clients - 1 else len(dataset)
-            indices = list(range(start, end))
-            data_loader = self.get_dataloader(dataset, indices)
-            data_loaders.append(data_loader)
-        
-        return data_loaders
+        for label in labels_classes:
+            indices = class_indices[label]
+            np.random.shuffle(indices)
+
+            # Sample proportions for each client from Dirichlet distribution
+            proportions = np.random.dirichlet(alpha=[alpha] * num_clients)
+            proportions = (np.cumsum(proportions) * len(indices)).astype(int)[:-1]
+            splits = np.split(indices, proportions)
+
+            for client_id, split in enumerate(splits):
+                client_data[client_id].extend(split)
+
+        return client_data
