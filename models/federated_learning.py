@@ -154,7 +154,7 @@ class FederatedLearning:
                 for inputs, targets in val_loader:
                     print("k")
                     inputs, targets = inputs.to(self.device), targets.to(self.device)  
-                    output = model(data)
+                    output = model(inputs)
                     val_loss += self.config.loss_function(output, target).item()
 
             print(f"Round {round}, Client {client}, Epoch {epoch}, Validation Loss: {val_loss / len(val_loader)}")
