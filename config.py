@@ -12,7 +12,8 @@ class Configuration:
                  weight_decay: float,
                  dataset: str,
                  optimizer: str,
-                 data_partition_method: str):
+                 data_partition_method: str,
+                 loss_function: str):
 
         self.clients_number = clients_number
         self.servers_number = servers_number 
@@ -27,7 +28,8 @@ class Configuration:
         self.data_partition_method = data_partition_method
         self.optimizer = self.optimizer 
         self.data_partition_method = self.data_partition_method
+        self.loss_function = loss_function
 
-        
+
 
 
