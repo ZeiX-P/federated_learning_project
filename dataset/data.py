@@ -1,9 +1,8 @@
-from config import Config
 
 import torch
 import torchvision
 import torchvision.transforms as transforms
-from torch.utils.data import DataLoader, Dataset, random_split
+from torch.utils.data import DataLoader, Dataset, random_split, Subset
 
 from typing import List, Tuple, Optional, Dict
 
@@ -12,11 +11,10 @@ import random
 
 class Dataset:
 
-    def __init__(self):
+    def __init__(self, dataset_name: str):
 
-        self.number_of_clients = Config.clients_number
-        self.number_of_servers = Config.servers_number
-        
+        self.dataset_name = dataset_name
+
         self.trasform_train = transforms.Compose(
             [transforms.ToTensor(),
              transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
@@ -27,21 +25,24 @@ class Dataset:
         
 
 
-    def get_CIFAR_dataset(self, apply_transform: bool = True) -> tuple[Dataset, Dataset]:
+    def get_dataset(self, dataset_name:str, apply_transform: bool = True) -> tuple[Dataset, Dataset]:
         """
-        Load the dataset CIFAR100
+        Load dataset from torchvision and apply transformations if needed.
         """
+
+        dataset_class = getattr(torchvision.datasets, dataset_name)
+
         if apply_transform:
-            train_set = torchvision.datasets.CIFAR100(root='./data', train=True,
+            train_set = dataset_class(root='./data', train=True,
                                                 download=True, transform=None)
             
-            val_set = torchvision.datasets.CIFAR100(root='./data', train=False,
+            val_set = dataset_class(root='./data', train=False,
                                                 download=True, transform=None)
         else:
-            train_set = torchvision.datasets.CIFAR100(root='./data', train=True,
+            train_set = dataset_class(root='./data', train=True,
                                                 download=True, transform=self.trasform_train)
             
-            val_set = torchvision.datasets.CIFAR100(root='./data', train=False,
+            val_set = dataset_class(root='./data', train=False,
                                                 download=True, transform=self.trasform_test)
         return train_set, val_set
     
@@ -52,10 +53,17 @@ class Dataset:
         """
         if indices is not None:
             dataset = torch.utils.data.Subset(dataset, indices)
-        dataloader = DataLoader(dataset, batch_size=Config.batch_size,
+        dataloader = DataLoader(dataset, batch_size=32,
                                 shuffle=True, num_workers=2)
         return dataloader
     
+    def create_federated_datasets(dataset: Dataset, indices_dict: Dict[str, List[int]]) -> Dict[str, Subset]:
+        
+        federated_datasets: Dict[str, Subset] = {}
+        for client_id, indices in indices_dict.items():
+            federated_datasets[client_id] = torch.utils.data.Subset(dataset, indices)
+        return federated_datasets
+
     def idd_split(self, dataset: Dataset, num_clients: int) -> Dict[int, List[int]]:
 
         """
@@ -111,3 +119,5 @@ class Dataset:
                 client_data[client_id].extend(split)
 
         return client_data
+
+    
