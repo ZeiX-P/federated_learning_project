@@ -15,7 +15,7 @@ class FederatedLearning:
                  num_rounds: int,
                  epochs_per_round: int,
                  distribution_type: str,
-                 config: Configuration,
+                 config: Configuration
             ):
 
         self.global_model = global_model  
@@ -30,8 +30,18 @@ class FederatedLearning:
         indices = self.split_data_to_client()
         self.clients_data = self.create_dict_data(indices)
 
-        self.local_models = {i: copy.deepcopy(self.global_model) for i in range(self.num_clients)}
+        if torch.cuda.is_available():
+            self.device = torch.device('cuda')
+            self.global_model.to(self.device)
+            print("CUDA is available, using GPU.")
+        else:
+            print("CUDA is not available, using CPU instead.")
+            self.device = torch.device('cpu')
+            self.global_model.to(self.device)
 
+        self.local_models = {i: copy.deepcopy(self.global_model).to(self.device) for i in range(self.num_clients)}
+
+        
 
     def split_data_to_client(self):
 
