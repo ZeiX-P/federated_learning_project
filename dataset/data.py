@@ -11,19 +11,27 @@ import random
 
 class Dataset:
 
-    def __init__(self, dataset_name: str):
+    def __init__(self):
 
-        self.dataset_name = dataset_name
 
         self.trasform_train = transforms.Compose(
-            [transforms.ToTensor(),
-             transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+            [transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
         
         self.trasform_test = transforms.Compose(
-            [transforms.ToTensor(),
+            [ transforms.Resize((224, 224)),
+            transforms.ToTensor(),
              transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
-        
+    
+    def create_train_val_set(self, dataset: Dataset, seed: int = 42):
 
+        data_size = len(dataset)  
+        train_size = int(0.8 * data_size)  # 80pc train, 20pc validation
+        val_size = data_size - train_size
+        trainset, valset = random_split(dataset, [train_size, val_size])
+
+        return trainset, valset   
 
     def get_dataset(self, dataset_name:str, apply_transform: bool = True) -> tuple[Dataset, Dataset]:
         """
@@ -34,16 +42,16 @@ class Dataset:
 
         if apply_transform:
             train_set = dataset_class(root='./data', train=True,
-                                                download=True, transform=None)
-            
-            val_set = dataset_class(root='./data', train=False,
-                                                download=True, transform=None)
-        else:
-            train_set = dataset_class(root='./data', train=True,
                                                 download=True, transform=self.trasform_train)
             
             val_set = dataset_class(root='./data', train=False,
                                                 download=True, transform=self.trasform_test)
+        else:
+            train_set = dataset_class(root='./data', train=True,
+                                                download=True, transform=None)
+            
+            val_set = dataset_class(root='./data', train=False,
+                                                download=True, transform=None)
         return train_set, val_set
     
     def get_dataloader(self, dataset: Dataset, indices: Optional[List[int]] = None) -> DataLoader:

@@ -1,6 +1,6 @@
 from config import Configuration
 from dataset.data import Dataset
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, random_split
 import torch
 
 import copy 
@@ -15,6 +15,7 @@ class FederatedLearning:
                  num_rounds: int,
                  epochs_per_round: int,
                  distribution_type: str,
+                 client_fraction: float,
                  config: Configuration
             ):
 
@@ -27,8 +28,6 @@ class FederatedLearning:
         self.distribution_type = distribution_type
         self.config = config
 
-        indices = self.split_data_to_client()
-        self.clients_data = self.create_dict_data(indices)
 
         if torch.cuda.is_available():
             self.device = torch.device('cuda')
@@ -41,29 +40,42 @@ class FederatedLearning:
 
         self.local_models = {i: copy.deepcopy(self.global_model).to(self.device) for i in range(self.num_clients)}
 
-        
+        self.dict_train_client_data, self.dict_val_client_data = self.d()
 
-    def split_data_to_client(self):
+    def d(self):
+
+        dataset, _ = self.data.get_dataset(self.config.dataset)
+
+        global_train_set, global_val_set = self.data.create_train_val_set(dataset)
+        train_indices = self.split_data_to_client(global_train_set, self.num_clients)
+        val_indices = self.split_data_to_client(global_val_set, self.num_clients)
+
+        dict_train_client_data = self.create_dict_data(global_train_set,train_indices)
+        dict_val_client_data = self.create_dict_data(global_val_set,val_indices)
+
+        return dict_train_client_data, dict_val_client_data
+
+    def split_data_to_client(self, dataset: Dataset, num_clients):
 
         if self.distribution_type == 'iid':
             # IID data distribution
-            indices = self.data.idd_split(self.data.train_set, self.num_clients)
-        if self.distribution_type == 'non-iid':
+            indices = self.data.idd_split(dataset, num_clients)
+        elif self.distribution_type == 'non-iid':
             # Non-IID data distribution
-            indices = self.data.nidd_split(self.data.train_set, self.num_clients)
+            indices = self.data.dirichlet_non_iid_split(dataset, num_clients)
         else:
             raise ValueError(f"Unknown distribution type: {self.distribution_type}")
 
         return indices
             
-    def create_dict_data(self, indices):
+    def create_dict_data(self,dataset, indices):
 
         clients_data = {}
 
         for client_id, indices_client in indices.items():
-            data_client_train_set = torch.utils.data.Subset(self.data.train_set, indices_client)
-            data_client_val_set = torch.utils.data.Subset(self.data.val_set, indices_client)
-            clients_data[client_id] = (data_client_train_set, data_client_val_set)
+            data_client_dataset = torch.utils.data.Subset(dataset, indices_client)
+            
+            clients_data[client_id] = data_client_dataset
 
         return clients_data
 
@@ -107,25 +119,31 @@ class FederatedLearning:
 
             for client in range(self.num_clients):
 
-                data_client_train_set = self.clients_data[client][0]
-                data_client_val_set = self.clients_data[client][1]
+                data_client_train_set = self.dict_train_client_data[client]
+                data_client_val_set = self.dict_val_client_data[client]
 
                 train_loader = DataLoader(data_client_train_set, batch_size=self.config.batch_size, shuffle=True)
                 val_loader = DataLoader(data_client_val_set, batch_size=self.config.batch_size, shuffle=False)
                 
-                self.train(self.local_models[client], train_loader, val_loader, self.config.loss_function, self.config.optimizer, client)               
+                self.train(self.local_models[client], train_loader, val_loader, client)               
 
             self.aggregate()
 
-    def train(self,model, train_loader, val_loader, loss_function, optimizer, client):
-
+    def train(self,model, train_loader, val_loader, client):
+        
+        optimizer = self.config.optimizer(model.parameters(), lr=self.config.learning_rate, momentum=self.config.momentum, weight_decay=self.config.weight_decay)
+        
         for epoch in range(self.epochs_per_round):
+            print(f"--- Client {client}, Epoch {epoch+1}/{self.epochs_per_round} ---")
             model.train()
-            for batch in train_loader:
-                data, target = batch
+            print(len(train_loader))
+            for data, target in train_loader:
+                print("i")
+                data, target = data.to(self.device), target.to(self.device)
+
                 optimizer.zero_grad()
                 output = model(data)
-                loss = loss_function(output, target)
+                loss = self.config.loss_function(output, target)
                 loss.backward()
                 optimizer.step()
 
@@ -133,10 +151,11 @@ class FederatedLearning:
             model.eval()
             with torch.no_grad():
                 val_loss = 0
-                for batch in val_loader:
-                    data, target = batch
+                for inputs, targets in val_loader:
+                    print("k")
+                    inputs, targets = inputs.to(self.device), targets.to(self.device)  
                     output = model(data)
-                    val_loss += loss_function(output, target).item()
+                    val_loss += self.config.loss_function(output, target).item()
 
             print(f"Round {round}, Client {client}, Epoch {epoch}, Validation Loss: {val_loss / len(val_loader)}")
             
