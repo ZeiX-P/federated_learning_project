@@ -20,8 +20,8 @@ if __name__ == "__main__":
     dino = timm.create_model('vit_small_patch16_224.dino', pretrained=True)
 
     federated_learning = FederatedLearning(global_model=dino,data=data, num_clients=10, 
-                                           aggregation_method="FedAvg", num_rounds=1,
-                                            epochs_per_round=1, distribution_type="iid",
+                                           aggregation_method="FedAvg", num_rounds=10,
+                                            epochs_per_round=3, distribution_type="iid",
                                             client_fraction=0.5,config=config)
     
     print("Starting Federated Learning process...")
