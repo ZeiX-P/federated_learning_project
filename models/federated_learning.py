@@ -106,6 +106,9 @@ class FederatedLearning:
 
         self.global_model.load_state_dict(avg_weights)
 
+        for client_id in range(self.num_clients):
+                self.local_models[client_id].load_state_dict(copy.deepcopy(avg_weights))
+
     def federated_proximal(self):
         pass 
 
@@ -128,6 +131,8 @@ class FederatedLearning:
                 self.train(self.local_models[client], train_loader, val_loader, client)               
 
             self.aggregate()
+
+            
 
     def train(self,model, train_loader, val_loader, client):
         
@@ -155,9 +160,10 @@ class FederatedLearning:
                     print("k")
                     inputs, targets = inputs.to(self.device), targets.to(self.device)  
                     output = model(inputs)
-                    val_loss += self.config.loss_function(output, target).item()
+                    val_loss += self.config.loss_function(output, targets).item()
 
             print(f"Round {round}, Client {client}, Epoch {epoch}, Validation Loss: {val_loss / len(val_loader)}")
-            
+    
+    
 
 
