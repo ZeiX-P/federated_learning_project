@@ -209,7 +209,7 @@ class FederatedLearning:
             self.global_model.to(self.device)
 
         self.local_models = {i: copy.deepcopy(self.global_model).to(self.device) for i in range(self.num_clients)}
-        self.dict_train_client_data, self.dict_val_client_data = self.d()
+        self.global_train_set, self.global_val_set,self.dict_train_client_data, self.dict_val_client_data = self.d()
 
         # Initialise wandb with more detailed configuration
         run_name = f"{self.aggregation_method}_{self.distribution_type}_{self.num_clients}clients"
@@ -240,7 +240,7 @@ class FederatedLearning:
         val_indices = self.split_data_to_client(global_val_set, self.num_clients)
         dict_train_client_data = self.create_dict_data(global_train_set, train_indices)
         dict_val_client_data = self.create_dict_data(global_val_set, val_indices)
-        return dict_train_client_data, dict_val_client_data
+        return global_train_set, global_val_set, dict_train_client_data, dict_val_client_data
 
     def split_data_to_client(self, dataset: Dataset, num_clients):
         if self.distribution_type == 'iid':
@@ -326,6 +326,7 @@ class FederatedLearning:
             momentum=self.config.momentum,
             weight_decay=self.config.weight_decay
         )
+
 
         for epoch in range(self.epochs_per_round):
             print(f"--- Client {client}, Epoch {epoch+1}/{self.epochs_per_round} ---")

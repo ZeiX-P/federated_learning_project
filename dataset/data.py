@@ -24,6 +24,7 @@ class Dataset:
             transforms.ToTensor(),
              transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
     
+
     def create_train_val_set(self, dataset: Dataset, seed: int = 42):
 
         data_size = len(dataset)  
@@ -64,6 +65,19 @@ class Dataset:
         dataloader = DataLoader(dataset, batch_size=32,
                                 shuffle=True, num_workers=2)
         return dataloader
+    
+    def get_dataloaders(self,dataset_name: str):
+
+        dataset = self.get_dataset(dataset_name, apply_transform=True)
+        train_set, val_set = self.create_train_val_set(dataset)
+        
+        train_loader = DataLoader(train_set, batch_size=32,
+                                shuffle=True)
+        
+        val_loader = DataLoader(val_set, batch_size=32,
+                                shuffle=False)
+        
+        return train_loader, val_loader
     
     def create_federated_datasets(dataset: Dataset, indices_dict: Dict[str, List[int]]) -> Dict[str, Subset]:
         

@@ -4,7 +4,7 @@ from dataset.data import Dataset
 import timm
 import torch
 import torch.nn as nn
-from models.train import train_model 
+
 
 if __name__ == "__main__":
 
@@ -19,12 +19,13 @@ if __name__ == "__main__":
                           loss_function=nn.CrossEntropyLoss())
     
     dino = timm.create_model('vit_small_patch16_224.dino', pretrained=True)
+
+    federated_learning = FederatedLearning(global_model=dino,data=data, num_clients=10, 
+                                           aggregation_method="FedAvg", num_rounds=10,
+                                            epochs_per_round=3, distribution_type="iid",
+                                            client_fraction=0.5,config=config)
     
-    train_dataloader, val_dataloader = data.get_dataloader(config.dataset, apply_transform=True)
-    
-    res_dict = train_model(
-        training_params=config,
-        train_loader=train_dataloader,
-        val_loader=val_dataloader,
-        project_name="fl_centralized_baseline",
-    )
+    print("Starting Federated Learning process...")
+    federated_learning.run()
+
+    print("Federated Learning process completed.")
