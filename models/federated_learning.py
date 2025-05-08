@@ -206,7 +206,7 @@ class FederatedLearning:
         self.dict_train_client_data, self.dict_val_client_data = self.d()
 
         # Initialise wandb
-        wandb.init(project="federated-learning", config={
+        wandb.init(project="federated_learning_project", config={
             "aggregation_method": self.aggregation_method,
             "distribution_type": self.distribution_type,
             "num_clients": self.num_clients,
