@@ -9,19 +9,24 @@ from models.train import train_model
 if __name__ == "__main__":
 
     data = Dataset()
+    dino = timm.create_model('vit_small_patch16_224.dino', pretrained=True)
     config = Configuration(
+                          model = dino,
+                          training_name="fl_centralized_baseline",
                           batch_size=32,
                           learning_rate=0.01,
                           momentum=0.9,
                           weight_decay=5e-4,
                           dataset="CIFAR100",
                           optimizer=torch.optim.SGD,
-                          loss_function=nn.CrossEntropyLoss())
+                          loss_function=nn.CrossEntropyLoss(),
+                          scheduler=torch.optim.lr_scheduler.CosineAnnealingLR,
+                          epochs=10)
     
-    dino = timm.create_model('vit_small_patch16_224.dino', pretrained=True)
     
-    train_dataloader, val_dataloader = data.get_dataloader(config.dataset, apply_transform=True)
     
+    train_dataloader, val_dataloader = data.get_dataloaders(config.dataset)
+
     res_dict = train_model(
         training_params=config,
         train_loader=train_dataloader,
