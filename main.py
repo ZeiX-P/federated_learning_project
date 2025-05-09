@@ -13,7 +13,7 @@ if __name__ == "__main__":
     config = Configuration(
                           model = dino,
                           training_name="fl_centralized_baseline",
-                          batch_size=32,
+                          batch_size=64,
                           learning_rate=0.01,
                           momentum=0.9,
                           weight_decay=5e-4,

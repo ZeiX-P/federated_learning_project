@@ -94,11 +94,12 @@ def train_model(
         correct = 0
 
         for batch_idx, (inputs, targets) in enumerate(train_loader):
+            print(f"Batch {batch_idx}/{len(train_loader)}")
             inputs, targets = inputs.to(device), targets.to(device)
 
             preds = model(inputs)
             loss = loss_func(preds, targets)
-
+            
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()

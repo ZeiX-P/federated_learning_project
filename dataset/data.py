@@ -64,7 +64,7 @@ class Dataset:
         """
         if indices is not None:
             dataset,_ = torch.utils.data.Subset(dataset, indices)
-        dataloader = DataLoader(dataset, batch_size=32,
+        dataloader = DataLoader(dataset, batch_size=64,
                                 shuffle=True, num_workers=2)
         return dataloader
     
@@ -73,10 +73,10 @@ class Dataset:
         dataset,_ = self.get_dataset(dataset_name, apply_transform=True)
         train_set, val_set = self.create_train_val_set(dataset)
         
-        train_loader = DataLoader(train_set, batch_size=32,
+        train_loader = DataLoader(train_set, batch_size=64,
                                 shuffle=True)
         
-        val_loader = DataLoader(val_set, batch_size=32,
+        val_loader = DataLoader(val_set, batch_size=64,
                                 shuffle=False)
         
         return train_loader, val_loader
