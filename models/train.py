@@ -93,7 +93,7 @@ def train_model(
         total = 0
         correct = 0
 
-        for inputs, targets in train_loader:
+        for batch_idx, (inputs, targets) in enumerate(train_loader):
             inputs, targets = inputs.to(device), targets.to(device)
 
             preds = model(inputs)
@@ -107,6 +107,12 @@ def train_model(
             _, predicted = preds.max(1)
             total += targets.size(0)
             correct += predicted.eq(targets).sum().item()
+
+            wandb.log({
+                    "batch/train_loss": loss.item(),
+                    "batch/learning_rate": optimizer.param_groups[0]["lr"],
+                    "batch": epoch * len(train_loader) + batch_idx,
+                })
 
         if scheduler is not None:
             scheduler.step()
