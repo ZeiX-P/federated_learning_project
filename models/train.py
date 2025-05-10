@@ -80,7 +80,7 @@ def train_model(
     optimizer = training_params.optimizer(
         model.parameters())
 
-    scheduler = training_params.scheduler
+    scheduler = training_params.scheduler()
 
     best_acc = 0
     num_epochs = training_params.epochs
