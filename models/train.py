@@ -76,11 +76,20 @@ def train_model(
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = training_params.model.to(device)
-    loss_func = training_params.loss_function
-    optimizer = training_params.optimizer(
-        model.parameters())
+    loss_func = training_params.loss_function()
 
-    scheduler = training_params.scheduler()
+# 2. Instantiate the optimizer, passing model parameters and optimizer-specific params from config
+    optimizer = training_params.optimizer(
+    model.parameters(),
+    lr=training_params.learning_rate,
+    momentum=training_params.momentum, # Include if using SGD with momentum
+    weight_decay=training_params.weight_decay # Include if using weight decay
+    # Add other optimizer-specific parameters from training_params as needed
+)
+
+# 3. Instantiate the scheduler, passing the created optimizer and T_max from config
+# Make sure your config has a parameter for T_max (e.g., total_epochs, total_steps)
+    scheduler = training_params.scheduler(optimizer=optimizer, T_max=training_params.total_epochs) 
 
     best_acc = 0
     num_epochs = training_params.epochs
