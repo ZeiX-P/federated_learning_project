@@ -87,15 +87,14 @@ def train_model(
     num_epochs = training_params.epochs
 
     for epoch in range(1, num_epochs + 1):
-        print(f"Epoch {epoch}/{num_epochs}")
-        wandb.log({"Epoch": epoch}) 
+        
         model.train()
         running_loss = 0.0
         total = 0
         correct = 0
 
         for batch_idx, (inputs, targets) in enumerate(train_loader):
-            print(f"Batch {batch_idx}/{len(train_loader)}")
+            
             inputs, targets = inputs.to(device), targets.to(device)
 
             preds = model(inputs)
@@ -110,12 +109,7 @@ def train_model(
             total += targets.size(0)
             correct += predicted.eq(targets).sum().item()
 
-            wandb.log({
-                    "batch/train_loss": loss.item(),
-                    
-                    "batch": epoch * len(train_loader) + batch_idx,
-                })
-
+            
         if scheduler is not None:
             scheduler.step
 
