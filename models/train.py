@@ -101,9 +101,9 @@ def train_model(
             preds = model(inputs)
             loss = loss_func(preds, targets)
             
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            optimizer.zero_grad
+            loss.backward
+            optimizer.step
 
             running_loss += loss.item()
             _, predicted = preds.max(1)
@@ -112,12 +112,12 @@ def train_model(
 
             wandb.log({
                     "batch/train_loss": loss.item(),
-                    "batch/learning_rate": optimizer.param_groups[0]["lr"],
+                    
                     "batch": epoch * len(train_loader) + batch_idx,
                 })
 
         if scheduler is not None:
-            scheduler.step()
+            scheduler.step
 
         train_loss = running_loss / len(train_loader)
         train_accuracy = 100.0 * correct / total
