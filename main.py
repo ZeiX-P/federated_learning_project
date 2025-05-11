@@ -10,6 +10,7 @@ if __name__ == "__main__":
 
     data = Dataset()
     dino = timm.create_model('vit_small_patch16_224.dino', pretrained=True)
+    
     config = Configuration(
                           model = dino,
                           training_name="fl_centralized_baseline",
@@ -18,9 +19,9 @@ if __name__ == "__main__":
                           momentum=0.9,
                           weight_decay=5e-4,
                           dataset="CIFAR100",
-                          optimizer=torch.optim.SGD,
+                          optimizer_class=torch.optim.SGD,
                           loss_function=nn.CrossEntropyLoss(),
-                          scheduler=torch.optim.lr_scheduler.CosineAnnealingLR,
+                          scheduler_class=torch.optim.lr_scheduler.CosineAnnealingLR,
                           epochs=10,
                           optimizer_params={"momentum": 0.9, "weight_decay": 5e-4},
                           scheduler_params={"T_max": 20})

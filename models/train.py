@@ -68,8 +68,8 @@ def train_model(
                 "batch_size": train_loader.batch_size,
                 "learning_rate": training_params.learning_rate,
                 "architecture": training_params.model.__class__.__name__,
-                "optimizer_class": training_params.optimizer.__name__,
-                "loss_function": training_params.loss_function.__class__.__name__
+                #"optimizer_class": training_params.optimizer.__name__,
+                #"loss_function": training_params.loss_function.__class__.__name__
                
             },
         )
