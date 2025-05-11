@@ -15,7 +15,7 @@ if __name__ == "__main__":
                           model = dino,
                           training_name="fl_centralized_baseline",
                           batch_size=64,
-                          learning_rate=0.01,
+                          learning_rate=1e-3,
                           momentum=0.9,
                           weight_decay=5e-4,
                           dataset="CIFAR100",
