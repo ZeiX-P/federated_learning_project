@@ -9,6 +9,20 @@ import wandb
 
 
 
+import logging
+import os
+from typing import Optional, Dict, Union
+
+import torch
+from torch import nn
+from torch.utils.data import DataLoader
+import wandb
+
+
+def get_device():
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
 def compute_predictions(
     model: nn.Module,
     dataloader: DataLoader,
@@ -18,7 +32,8 @@ def compute_predictions(
     model.eval()
     predictions = []
     labels = []
-    loss = 0.0
+    total_loss = 0.0
+    total_samples = 0
 
     with torch.no_grad():
         for inputs, targets in dataloader:
@@ -26,7 +41,8 @@ def compute_predictions(
             preds = model(inputs)
 
             if loss_function is not None:
-                loss += loss_function(preds, targets).item()
+                total_loss += loss_function(preds, targets).item() * targets.size(0)
+                total_samples += targets.size(0)
 
             _, predicted = torch.max(preds, 1)
             predictions.append(predicted)
@@ -36,9 +52,9 @@ def compute_predictions(
     labels = torch.cat(labels)
     correct = (predictions == labels).sum().item()
     accuracy = 100.0 * correct / len(labels)
-    loss = loss / len(labels)
+    avg_loss = total_loss / total_samples if total_samples > 0 else 0.0
 
-    return predictions, labels, loss, accuracy
+    return predictions, labels, avg_loss, accuracy
 
 
 def train_model(
@@ -50,15 +66,14 @@ def train_model(
     wandb_log: bool = True,
     wandb_save: bool = True,
 ) -> dict:
-
-    #assert isinstance(training_params, Configuration)
-    assert isinstance(train_loader, DataLoader)
-    assert isinstance(val_loader, DataLoader)
+    assert train_loader is not None
+    if val_loader is not None:
+        assert isinstance(val_loader, DataLoader)
 
     use_wandb = wandb_log or wandb_save
     if use_wandb:
         if project_name is None:
-            raise ValueError("project name cannot be None with either wandb_log or wandb_save set to True.")
+            raise ValueError("project_name cannot be None if using wandb.")
 
         wandb.init(
             project=project_name,
@@ -68,52 +83,43 @@ def train_model(
                 "batch_size": train_loader.batch_size,
                 "learning_rate": training_params.learning_rate,
                 "architecture": training_params.model.__class__.__name__,
-                #"optimizer_class": training_params.optimizer.__name__,
-                #"loss_function": training_params.loss_function.__class__.__name__
-               
             },
         )
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = get_device()
     model = training_params.model.to(device)
     loss_func = training_params.loss_function
-
     optimizer = training_params.optimizer
-
-
     scheduler = training_params.scheduler
 
     best_acc = 0
     num_epochs = training_params.epochs
 
     for epoch in range(1, num_epochs + 1):
-        
         model.train()
         running_loss = 0.0
-        total = 0
         correct = 0
+        total = 0
 
-        for batch_idx, (inputs, targets) in enumerate(train_loader):
-            
+        for inputs, targets in train_loader:
             inputs, targets = inputs.to(device), targets.to(device)
 
             preds = model(inputs)
             loss = loss_func(preds, targets)
-            
-            optimizer.zero_grad
-            loss.backward
-            optimizer.step
 
-            running_loss += loss.item()
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            running_loss += loss.item() * targets.size(0)
             _, predicted = preds.max(1)
             total += targets.size(0)
             correct += predicted.eq(targets).sum().item()
 
-            
         if scheduler is not None:
-            scheduler.step
+            scheduler.step()
 
-        train_loss = running_loss / len(train_loader)
+        train_loss = running_loss / total
         train_accuracy = 100.0 * correct / total
 
         if wandb_log:
@@ -123,7 +129,7 @@ def train_model(
                 "Train Accuracy": train_accuracy,
             })
         else:
-            logging.info(f"Epoch: {epoch}: Train Loss: {train_loss}, Train Accuracy: {train_accuracy}")
+            logging.info(f"Epoch {epoch}: Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%")
 
         if val_loader:
             _, _, val_loss, val_accuracy = compute_predictions(
@@ -136,7 +142,7 @@ def train_model(
                     "Validation Accuracy": val_accuracy,
                 })
             else:
-                logging.info(f"Epoch: {epoch}: Validation Loss: {val_loss}, Validation Accuracy: {val_accuracy}")
+                logging.info(f"Epoch {epoch}: Val Loss: {val_loss:.4f}, Val Accuracy: {val_accuracy:.2f}%")
 
             if val_accuracy > best_acc:
                 best_acc = val_accuracy
