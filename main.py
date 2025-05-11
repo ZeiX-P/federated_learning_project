@@ -10,7 +10,7 @@ if __name__ == "__main__":
 
     data = Dataset()
     dino = timm.create_model('vit_small_patch16_224.dino', pretrained=True)
-    
+    dino.head = nn.Linear(384, 100)
     config = Configuration(
                           model = dino,
                           training_name="fl_centralized_baseline",
