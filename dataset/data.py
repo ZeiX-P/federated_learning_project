@@ -15,16 +15,26 @@ class Dataset:
 
         
         self.trasform_train = transforms.Compose(
-            [transforms.Resize((224,224)),
-             transforms.RandomHorizontalFlip(),
-            
+            [
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomCrop(32, padding=4),
+            transforms.Resize((224,224)),  # resize to 224 x 224 (required by ViT)
             transforms.ToTensor(),
-            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+            # Imagenet normalization
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+        ]
+            )
         
         self.trasform_test = transforms.Compose(
-            [ transforms.Resize((224,224)),
+            [
+            transforms.Resize(224),  # resize to 224 x 224 (required by ViT)
             transforms.ToTensor(),
-             transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+            # Imagenet normalization
+            # DINO model has learned features from ImageNet, so during fine-tuning on CIFAR-100,
+            # the model will expect inputs to be normalized in the same way as during pretraining.
+            # TODO check this is correct
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+        ])
     
 
     def create_train_val_set(self, dataset: Dataset, seed: int = 42):
