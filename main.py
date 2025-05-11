@@ -21,7 +21,9 @@ if __name__ == "__main__":
                           optimizer=torch.optim.SGD,
                           loss_function=nn.CrossEntropyLoss(),
                           scheduler=torch.optim.lr_scheduler.CosineAnnealingLR,
-                          epochs=10)
+                          epochs=10,
+                          optimizer_params={"momentum": 0.9, "weight_decay": 5e-4},
+                          scheduler_params={"T_max": 20})
     
     
     
