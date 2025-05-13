@@ -87,7 +87,7 @@ class Dataset:
                                 shuffle=True)
         
         val_loader = DataLoader(val_set, batch_size=64,
-                                shuffle=False)
+                                shuffle=True)
         
         return train_loader, val_loader
     
