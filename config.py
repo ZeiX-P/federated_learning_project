@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import LRScheduler
 from typing import Optional, Dict
-'''
+
 class Configuration:
     def __init__(
         self,
@@ -72,8 +72,8 @@ class Configuration:
             scheduler_params['T_max'] = self.epochs
 
         return self.scheduler_class(self.optimizer, **scheduler_params)
-'''
 
+'''
 import attr
 import torch
 from torch import nn
@@ -170,3 +170,4 @@ class TrainingParams:
             return self.scheduler_class(
                 self.optimizer, **{"T_max": 50, **scheduler_params}
             )
+'''
