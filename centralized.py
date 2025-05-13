@@ -413,25 +413,6 @@ def train_model(
     return res_dict
 
 
-def train_on_subset(training_params, train_loader, val_loader=None, epochs=2, **kwargs):
-    assert isinstance(training_params, TrainingParams)
-    training_params_subset = TrainingParams(
-        **{
-            **training_params.__dict__,
-            **{
-                "training_name": f"{training_params.training_name}_SUBSET",
-                "epochs": epochs,
-            },
-        }
-    )
-    train_loader_subset = get_subset_loader(train_loader)
-    train_model(
-        training_params=training_params_subset,
-        train_loader=train_loader_subset,
-        val_loader=val_loader,
-        **kwargs,
-    )
-    logging.info("Finished core on subset.")
 
 
 
