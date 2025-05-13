@@ -33,8 +33,6 @@ from typing import Optional, Dict, Any
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
-from optim.ssgd import SparseSGDM
-
 
 def is_nn_module(instance, attribute, value):
     """Validator to check if the value is an instance of nn.Module or its subclass."""
@@ -93,20 +91,7 @@ class TrainingParams:
     optimizer_params: Optional[Dict[str, Any]] = attr.ib(default=None)
     scheduler_params: Optional[Dict[str, Any]] = attr.ib(default=None)
 
-    def __attrs_post_init__(self):
-        if self.optimizer_class is SparseSGDM:
-            if not isinstance(self.optimizer_params, dict):
-                raise ValueError(
-                    "optimizer_params must be a dictionary when using SparseSGDM."
-                )
-
-            if "named_params" not in self.optimizer_params:
-                raise ValueError(
-                    "SparseSGDM requires 'named_params' in optimizer_params."
-                )
-
-            if "grad_mask" not in self.optimizer_params:
-                raise ValueError("SparseSGDM requires 'grad_mask' in optimizer_params.")
+    
 
     @property
     def optimizer(self):
