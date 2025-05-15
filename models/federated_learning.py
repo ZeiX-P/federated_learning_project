@@ -1,4 +1,4 @@
-from config import Configuration
+#from config import Configuration
 from dataset.data import Dataset
 from torch.utils.data import DataLoader, random_split
 import torch
@@ -186,7 +186,7 @@ class FederatedLearning:
                  epochs_per_round: int,
                  distribution_type: str,
                  client_fraction: float,
-                 config: Configuration
+                 config
             ):
 
         self.global_model = global_model  
@@ -320,12 +320,7 @@ class FederatedLearning:
             })
 
     def train(self, model, train_loader, val_loader, client, round):
-        optimizer = self.config.optimizer(
-            model.parameters(),
-            lr=self.config.learning_rate,
-            momentum=self.config.momentum,
-            weight_decay=self.config.weight_decay
-        )
+        optimizer = self.config.optimizer
 
 
         for epoch in range(self.epochs_per_round):
