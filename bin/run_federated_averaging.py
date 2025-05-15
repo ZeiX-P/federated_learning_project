@@ -19,6 +19,9 @@ if __name__ == "__main__":
                           loss_function=nn.CrossEntropyLoss())
     
     dino = timm.create_model('vit_small_patch16_224.dino', pretrained=True)
+    for param in dino.parameters():
+        param.requires_grad = False
+    dino.head = nn.Linear(384, 100)
 
     federated_learning = FederatedLearning(global_model=dino,data=data, num_clients=10, 
                                            aggregation_method="FedAvg", num_rounds=10,
