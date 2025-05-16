@@ -4,6 +4,10 @@ from torch.utils.data import DataLoader, random_split
 import torch
 import wandb
 import copy 
+from models.train import train_with_global_mask
+from typing import Optional, Dict, Union
+from torch import nn
+
 '''
 class FederatedLearning:
 
@@ -626,6 +630,8 @@ class FederatedLearning:
             
             wandb.log({"active_clients": num_selected_clients, "round": round})
             
+            
+            
             # Train selected clients
             for client in selected_clients:
                 data_client_train_set = self.dict_train_client_data[client]
@@ -836,7 +842,155 @@ class FederatedLearning:
         val_loader = DataLoader(self.global_val_set, batch_size=self.config.batch_size, shuffle=False)
         
         return self.validate(self.global_model, val_loader)
+    
+    def run_model_editing(self):
+
+        for round in range(self.num_rounds):
+            print(f"--- Round {round+1}/{self.num_rounds} ---")
+            wandb.log({"round_progress": round/self.num_rounds * 100})
+            
+            # Select fraction of clients for this round
+            num_selected_clients = max(1, int(self.client_fraction * self.num_clients))
+            selected_clients = random.sample(range(self.num_clients), num_selected_clients)
+            
+            wandb.log({"active_clients": num_selected_clients, "round": round})
+            
+            dict_local_mask = {}
+
+            for client in selected_clients:
+                data_client_train_set = self.dict_train_client_data[client]
+
+                train_loader = DataLoader(data_client_train_set, batch_size=self.config.batch_size, shuffle=True)
+                
+                fisher = self.compute_fisher_diag(self.local_models[client], train_loader,self.config.loss_function)
+                mask = self.create_fisher_mask(fisher,0.5)
+                dict_local_mask[client] = mask
+
+            global_mask = self.aggregate_sensitivity_scores(dict_local_mask, 0.5)
+            # Train selected clients
+            for client in selected_clients:
+                data_client_train_set = self.dict_train_client_data[client]
+                data_client_val_set = self.dict_val_client_data[client]
+
+                train_loader = DataLoader(data_client_train_set, batch_size=self.config.batch_size, shuffle=True)
+                val_loader = DataLoader(data_client_val_set, batch_size=self.config.batch_size, shuffle=False)
+                
+                self.train_with_global_mask(self.local_models[client], train_loader, val_loader, client, round)
+
+            # Aggregate and evaluate global model
+            self.aggregate()
+            global_metrics = self.evaluate_global_model()
+            
+            # Log global model performance for this round
+            wandb.log({
+                "global/val_loss": global_metrics["val_loss"],
+                "global/val_accuracy": global_metrics.get("val_accuracy", 0),
+                "round": round
+            })
+            
+            print(f"Round {round+1} - Global validation accuracy: {global_metrics.get('val_accuracy', 0):.2f}%")
+
+
+    def compute_fisher_diag(self, model, dataloader, loss_fn):
+
+        fisher_diag = None 
+
+        total_samples = 0
+
+        for batch_idx , (inputs, target) in enumerate(dataloader):
+
+            inputs, target = inputs.to(self.device), target.to(self.device)
+
+            model.zero_grad()
+            outputs = model(inputs)
+
+            loss = loss_fn(outputs, target)
+            loss.backward()
+
+            gradients = []
+
+            for parameter in model.parameters():
+                if parameter.grad is not None:
+
+                    gradients.append(parameter.grad.detach().clone().flatten())
+                else:
+                    gradients.append(torch.zeros_like(parameter.data.flatten())) 
+
+            gradients = torch.cat(gradients) 
+
+            if fisher_diag is None:
+                fisher_diag = gradients.pow(2)
+            else:
+                fisher_diag += gradients.pow(2)
+
+            total_samples += 1
+
+        fisher_diag /= total_samples
+
+
+    def create_fisher_mask(fisher_diagonal: torch.Tensor, sparsity_ratio: float, model: nn.Module) -> Dict[str, torch.Tensor]:
+    
+        # Calculate the number of parameters to freeze.
+        num_params = fisher_diagonal.numel()
+        num_freeze = int(sparsity_ratio * num_params)
+
+        # Handle the case where sparsity_ratio is 0.
+        if num_freeze == 0:
+            return {name: torch.ones_like(param) for name, param in model.named_parameters()}
+
+        # Find the threshold value.
+        threshold_value = torch.kthvalue(fisher_diagonal, num_freeze).values
+
+        # Create the mask.
+        flat_mask = (fisher_diagonal < threshold_value).float()  # 1 for parameters to update, 0 for frozen
+
+        param_sizes = [p.numel() for _, p in model.named_parameters()]
+        param_shapes = [p.shape for _, p in model.named_parameters()]
+        param_names = [name for name, _ in model.named_parameters()]
+        split_masks = torch.split(flat_mask, param_sizes)
+
+        return {
+            name: mask.view(shape)
+            for name, mask, shape in zip(param_names, split_masks, param_shapes)
+        }
+    
+    def aggregate_sensitivity_scores(self, dict_local_scores, threshold=0.5):
+
+        total_data_points = sum(len(self.dict_train_client_data[client]) for client in dict_local_scores)
+        aggregated_scores = {}
+
+        for client, scores in dict_local_scores.items():
+            client_data_size = len(self.dict_train_client_data[client])
+            weight = client_data_size / total_data_points
+
+            for name, score in scores.items():
+                if name not in aggregated_scores:
+                    aggregated_scores[name] = score.clone().float() * weight
+                else:
+                    aggregated_scores[name] += score.float() * weight
+
+        # Apply threshold to get the final global binary mask
+        global_mask = {
+            name: (score >= threshold).int()
+            for name, score in aggregated_scores.items()
+        }
+
+        return global_mask
+
         
+
+
+
+
+
+
+
+
+
+
+
+
+
     def __del__(self):
         """Clean up when the class is deleted."""
         try:

@@ -155,3 +155,36 @@ def train_model(
         wandb.finish()
 
     return {"model": model, "best_accuracy": best_acc}
+
+def train_with_global_mask(self, model, train_loader, val_loader, client_id, round_num):
+    model.train()
+    optimizer = torch.optim.SGD(model.parameters(), lr=self.config.lr)
+
+    for epoch in range(self.config.local_epochs):
+        total_loss = 0
+        for inputs, targets in train_loader:
+            inputs, targets = inputs.to(self.device), targets.to(self.device)
+
+            optimizer.zero_grad()
+            outputs = model(inputs)
+            loss = self.config.loss_function(outputs, targets)
+            loss.backward()
+
+            # Apply global mask to gradients
+            with torch.no_grad():
+                for name, param in model.named_parameters():
+                    if name in self.global_mask and param.grad is not None:
+                        param.grad.mul_(self.global_mask[name])
+
+            optimizer.step()
+
+        # Optional: evaluate on validation set
+        val_loss, val_accuracy = self.evaluate_model(model, val_loader)
+
+        # Log training/validation metrics
+        wandb.log({
+            f"client_{client_id}/val_loss": val_loss,
+            f"client_{client_id}/val_accuracy": val_accuracy,
+            "epoch": epoch,
+            "round": round_num
+        })
