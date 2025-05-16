@@ -928,7 +928,7 @@ class FederatedLearning:
         fisher_diag /= total_samples
 
 
-    def create_fisher_mask(fisher_diagonal: torch.Tensor, sparsity_ratio: float, model: nn.Module) -> Dict[str, torch.Tensor]:
+    def create_fisher_mask(self,fisher_diagonal: torch.Tensor, sparsity_ratio: float, model: nn.Module) -> Dict[str, torch.Tensor]:
     
         # Calculate the number of parameters to freeze.
         num_params = fisher_diagonal.numel()
