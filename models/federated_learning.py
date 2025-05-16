@@ -929,7 +929,8 @@ class FederatedLearning:
 
 
     def create_fisher_mask(self,fisher_diagonal: torch.Tensor, sparsity_ratio: float, model: nn.Module) -> Dict[str, torch.Tensor]:
-    
+        if fisher_diagonal is None:
+            raise ValueError("Fisher diagonal tensor is None")
         # Calculate the number of parameters to freeze.
         num_params = fisher_diagonal.numel()
         num_freeze = int(sparsity_ratio * num_params)
