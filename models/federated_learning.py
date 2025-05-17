@@ -979,6 +979,294 @@ class FederatedLearning:
 
         return global_mask
 
+
+    def run_model_editing_robust(self):
+        for round in range(self.num_rounds):
+            print(f"--- Round {round+1}/{self.num_rounds} ---")
+            wandb.log({"round_progress": round/self.num_rounds * 100})
+            
+            # Select fraction of clients for this round
+            num_selected_clients = max(1, int(self.client_fraction * self.num_clients))
+            selected_clients = random.sample(range(self.num_clients), num_selected_clients)
+            
+            wandb.log({"active_clients": num_selected_clients, "round": round})
+            
+            dict_local_mask = {}
+
+            # Add wandb tracking for Fisher computation
+            for client in selected_clients:
+                wandb.log({f"client_{client}/processing": True, "round": round})
+                data_client_train_set = self.dict_train_client_data[client]
+                wandb.log({f"client_{client}/dataset_size": len(data_client_train_set)})
+
+                train_loader = DataLoader(data_client_train_set, batch_size=self.config.batch_size, shuffle=True)
+                
+                try:
+                    # Track Fisher computation
+                    fisher = self.compute_fisher_diag_robust(self.local_models[client], train_loader, self.config.loss_function)
+                    if fisher is not None:
+                        wandb.log({
+                            f"client_{client}/fisher_computed": True,
+                            f"client_{client}/fisher_size": fisher.numel(),
+                            f"client_{client}/fisher_mean": fisher.mean().item(),
+                            f"client_{client}/fisher_max": fisher.max().item(),
+                            "round": round
+                        })
+                        # Track histogram of Fisher values
+                        wandb.log({
+                            f"client_{client}/fisher_histogram": wandb.Histogram(fisher.cpu().numpy()),
+                            "round": round
+                        })
+                        
+                        # Create mask with the client's model
+                        mask = self.create_fisher_mask_robust(fisher, 0.5, self.local_models[client])
+                        dict_local_mask[client] = mask
+                        wandb.log({f"client_{client}/mask_created": True, "round": round})
+                    else:
+                        wandb.log({
+                            f"client_{client}/fisher_computed": False,
+                            f"client_{client}/error": "Fisher is None",
+                            "round": round
+                        })
+                except Exception as e:
+                    wandb.log({
+                        f"client_{client}/error": str(e),
+                        f"client_{client}/error_type": str(type(e).__name__),
+                        "round": round
+                    })
+                    continue
+
+            # Aggregate sensitivity scores with wandb tracking
+            try:
+                if dict_local_mask:
+                    global_mask = self.aggregate_sensitivity_scores(dict_local_mask, 0.5)
+                    wandb.log({"global_mask_created": True, "round": round})
+                    
+                    # Log global mask sparsity
+                    if global_mask:
+                        first_key = next(iter(global_mask))
+                        global_sparsity = (global_mask[first_key] == 0).float().mean().item()
+                        wandb.log({"global_mask_sparsity": global_sparsity, "round": round})
+                        
+                        # Log per-layer mask sparsity
+                        for name, mask in global_mask.items():
+                            layer_sparsity = (mask == 0).float().mean().item()
+                            wandb.log({f"global_mask_sparsity/{name}": layer_sparsity, "round": round})
+                else:
+                    wandb.log({"global_mask_created": False, "error": "No local masks available", "round": round})
+            except Exception as e:
+                wandb.log({
+                    "global_mask_error": str(e),
+                    "global_mask_error_type": str(type(e).__name__),
+                    "round": round
+                })
+                
+            # Train selected clients
+            for client in selected_clients:
+                data_client_train_set = self.dict_train_client_data[client]
+                data_client_val_set = self.dict_val_client_data[client]
+
+                train_loader = DataLoader(data_client_train_set, batch_size=self.config.batch_size, shuffle=True)
+                val_loader = DataLoader(data_client_val_set, batch_size=self.config.batch_size, shuffle=False)
+                
+                self.train_with_global_mask(self.local_models[client], train_loader, val_loader, client, round)
+
+            # Aggregate and evaluate global model
+            self.aggregate()
+            global_metrics = self.evaluate_global_model()
+            
+            # Log global model performance for this round
+            wandb.log({
+                "global/val_loss": global_metrics["val_loss"],
+                "global/val_accuracy": global_metrics.get("val_accuracy", 0),
+                "round": round
+            })
+            
+            print(f"Round {round+1} - Global validation accuracy: {global_metrics.get('val_accuracy', 0):.2f}%")
+
+# Fixed compute_fisher_diag that properly returns fisher_diag
+    def compute_fisher_diag_robust(self, model, dataloader, loss_fn):
+        """
+        Robustly compute the diagonal of the Fisher Information Matrix.
+        Always returns a valid tensor or None if there's a critical error.
+        """
+        wandb.log({"compute_fisher_diag": "started"})
+        model.eval()  # Set model to evaluation mode
+
+        # Initialize fisher_diag as None
+        fisher_diag = None
+        total_samples = 0
+
+        try:
+            # Track dataloader size
+            dataloader_size = len(dataloader)
+            wandb.log({"dataloader_size": dataloader_size})
+            
+            if dataloader_size == 0:
+                wandb.log({"warning": "dataloader_empty"})
+                # Initialize with zeros for empty dataloader
+                params_size = sum(p.numel() for p in model.parameters())
+                return torch.zeros(params_size, device=self.device)
+            
+            for batch_idx, (inputs, target) in enumerate(dataloader):
+                # Track batch processing
+                wandb.log({"batch_idx": batch_idx})
+                
+                try:
+                    inputs, target = inputs.to(self.device), target.to(self.device)
+                    
+                    model.zero_grad()
+                    outputs = model(inputs)
+                    
+                    loss = loss_fn(outputs, target)
+                    loss.backward()
+                    
+                    # Log loss
+                    wandb.log({"batch_loss": loss.item()})
+                    
+                    gradients = []
+                    params_with_grad = 0
+                    params_without_grad = 0
+                    
+                    for parameter in model.parameters():
+                        if parameter.grad is not None:
+                            gradients.append(parameter.grad.detach().clone().flatten())
+                            params_with_grad += 1
+                        else:
+                            gradients.append(torch.zeros_like(parameter.data.flatten()))
+                            params_without_grad += 1
+                    
+                    # Log gradient statistics
+                    wandb.log({
+                        "params_with_grad": params_with_grad,
+                        "params_without_grad": params_without_grad
+                    })
+                    
+                    gradients = torch.cat(gradients)
+                    
+                    if fisher_diag is None:
+                        fisher_diag = gradients.pow(2)
+                    else:
+                        fisher_diag += gradients.pow(2)
+                    
+                    total_samples += 1
+                    
+                except Exception as e:
+                    wandb.log({
+                        "batch_error": str(e),
+                        "batch_error_type": str(type(e).__name__),
+                        "batch_idx": batch_idx
+                    })
+                    continue
+            
+            # Check if any samples were processed
+            if total_samples > 0:
+                fisher_diag /= total_samples
+                wandb.log({"total_samples": total_samples})
+                
+                # Log additional fisher statistics
+                if fisher_diag is not None:
+                    wandb.log({
+                        "fisher_diag_shape": fisher_diag.shape[0],
+                        "fisher_diag_device": str(fisher_diag.device)
+                    })
+                
+                return fisher_diag
+            else:
+                wandb.log({"warning": "no_samples_processed"})
+                # Return zeros for no processed samples
+                params_size = sum(p.numel() for p in model.parameters())
+                return torch.zeros(params_size, device=self.device)
+                
+        except Exception as e:
+            wandb.log({
+                "fisher_diag_error": str(e),
+                "fisher_diag_error_type": str(type(e).__name__)
+            })
+            # Return zeros tensor for errors
+            params_size = sum(p.numel() for p in model.parameters())
+            return torch.zeros(params_size, device=self.device)
+
+# Fixed create_fisher_mask that matches your implementation with better error handling
+    def create_fisher_mask_robust(self, fisher_diagonal: torch.Tensor, sparsity_ratio: float, model: nn.Module) -> Dict[str, torch.Tensor]:
+        """
+        Robustly create a dictionary of binary gradient masks based on Fisher importance scores.
+        """
+        wandb.log({"create_fisher_mask": "started"})
+        
+        # Ensure fisher_diagonal is not None
+        if fisher_diagonal is None:
+            wandb.log({"error": "fisher_diagonal_is_none"})
+            raise ValueError("Fisher diagonal tensor is None")
+        
+        try:
+            # Calculate the number of parameters to freeze
+            num_params = fisher_diagonal.numel()
+            wandb.log({"num_params": num_params})
+            num_freeze = int(sparsity_ratio * num_params)
+            wandb.log({"num_freeze": num_freeze, "sparsity_ratio": sparsity_ratio})
+            
+            # Handle the case where sparsity_ratio is 0
+            if num_freeze == 0:
+                wandb.log({"warning": "zero_freeze_params"})
+                return {name: torch.ones_like(param) for name, param in model.named_parameters()}
+            
+            # Find the threshold value
+            threshold_value = torch.kthvalue(fisher_diagonal, num_freeze).values
+            wandb.log({"threshold_value": threshold_value.item()})
+            
+            # Create the mask
+            flat_mask = (fisher_diagonal < threshold_value).float()  # 1 for parameters to update, 0 for frozen
+            
+            # Log mask sparsity (% of parameters that are frozen)
+            mask_sparsity = (flat_mask == 0).float().mean().item()
+            wandb.log({"mask_sparsity": mask_sparsity})
+            
+            # Get parameter info
+            param_sizes = [p.numel() for _, p in model.named_parameters()]
+            param_shapes = [p.shape for _, p in model.named_parameters()]
+            param_names = [name for name, _ in model.named_parameters()]
+            
+            # Check for size mismatch
+            total_params = sum(param_sizes)
+            if total_params != flat_mask.numel():
+                wandb.log({
+                    "error": "mask_size_mismatch",
+                    "mask_size": flat_mask.numel(),
+                    "total_params": total_params
+                })
+                raise ValueError(f"Mask size {flat_mask.numel()} doesn't match parameter size {total_params}")
+            
+            # Split masks according to parameter sizes
+            split_masks = torch.split(flat_mask, param_sizes)
+            
+            # Create dictionary mapping parameter names to masks
+            masks = {}
+            for name, mask, shape in zip(param_names, split_masks, param_shapes):
+                try:
+                    masks[name] = mask.view(shape)
+                    # Log per-layer sparsity
+                    layer_sparsity = (masks[name] == 0).float().mean().item()
+                    wandb.log({f"layer_sparsity/{name}": layer_sparsity})
+                except Exception as e:
+                    wandb.log({
+                        f"error_reshaping/{name}": str(e),
+                        f"mask_shape": list(mask.shape) if hasattr(mask, 'shape') else None,
+                        f"target_shape": list(shape) if hasattr(shape, '__iter__') else shape
+                    })
+                    # Use ones as fallback
+                    masks[name] = torch.ones(shape, device=fisher_diagonal.device)
+            
+            return masks
+            
+        except Exception as e:
+            wandb.log({
+                "create_mask_error": str(e),
+                "create_mask_error_type": str(type(e).__name__)
+            })
+            # Return all-ones mask as fallback
+            return {name: torch.ones_like(param) for name, param in model.named_parameters()}
+
         
 
 

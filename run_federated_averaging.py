@@ -48,6 +48,6 @@ if __name__ == "__main__":
                                             client_fraction=0.5,config=config1)
     
     print("Starting Federated Learning process...")
-    federated_learning.run_model_editing()
+    federated_learning.run_model_editing_robust()
 
     print("Federated Learning process completed.")
