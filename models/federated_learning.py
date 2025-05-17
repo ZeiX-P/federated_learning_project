@@ -1281,35 +1281,72 @@ class FederatedLearning:
         """
         wandb.log({f"client_{client_id}/training": "started", "round": round_num})
         
-        # Set model to training mode
+        # Check if train_loader has samples
+        if len(train_loader) == 0:
+            wandb.log({
+                f"client_{client_id}/error": "empty_train_loader",
+                "round": round_num
+            })
+            return model
+        
+        # Reset model buffers like batch normalization parameters
         model.train()
         
-        # Initialize optimizer and learning rate scheduler
-        optimizer = torch.optim.SGD(
+        # Check task type to provide appropriate metrics
+        task_type = getattr(self.config, 'task', 'classification')
+        
+        # Create a copy of initial model weights to monitor changes
+        initial_weights = {name: param.clone().detach() for name, param in model.named_parameters()}
+        
+        # Initialize optimizer - try different optimizer if accuracy is low
+        optimizer = torch.optim.Adam(
             model.parameters(), 
             lr=self.config.learning_rate,
-            momentum=0.9,
             weight_decay=self.config.weight_decay
         )
         
-        # Optional: learning rate scheduler
-        scheduler = torch.optim.lr_scheduler.StepLR(
-            optimizer, 
-            step_size=5, 
-            gamma=0.1
+        # Optional: learning rate scheduler with warmup
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            optimizer,
+            max_lr=self.config.learning_rate,
+            total_steps=len(train_loader) * self.config.local_epochs,
+            pct_start=0.3
         )
         
         # Track training progress
         best_val_accuracy = 0.0
         best_val_loss = float('inf')
+        patience_counter = 0
+        max_patience = 3
         
         try:
             # Get the current global mask if available
             global_mask = getattr(self, 'global_mask', None)
             
-            # Log whether we're using a mask
+            # If mask is not available in the first round, create all-ones mask
+            if global_mask is None:
+                global_mask = {name: torch.ones_like(param) for name, param in model.named_parameters()}
+                wandb.log({f"client_{client_id}/mask_fallback": "created all-ones mask"})
+            
+            # Log mask sparsity and stats
+            total_params = 0
+            frozen_params = 0
+            for name, mask in global_mask.items():
+                layer_params = mask.numel()
+                layer_frozen = (mask == 0).sum().item()
+                total_params += layer_params
+                frozen_params += layer_frozen
+                wandb.log({
+                    f"client_{client_id}/layer_mask_sparsity/{name}": 100 * layer_frozen / layer_params,
+                    "round": round_num
+                })
+            
+            mask_sparsity = 100 * frozen_params / total_params if total_params > 0 else 0
             wandb.log({
-                f"client_{client_id}/using_mask": global_mask is not None,
+                f"client_{client_id}/using_mask": True,
+                f"client_{client_id}/mask_sparsity": mask_sparsity,
+                f"client_{client_id}/total_params": total_params,
+                f"client_{client_id}/frozen_params": frozen_params,
                 "round": round_num
             })
             
@@ -1335,11 +1372,21 @@ class FederatedLearning:
                     
                     # Apply mask to gradients if available
                     if global_mask:
-                        for name, param in model.named_parameters():
-                            if name in global_mask:
-                                # Zero out gradients for parameters that should be frozen
-                                # Note: mask is 1 for parameters to update, 0 for frozen params
-                                param.grad *= global_mask[name]
+                        with torch.no_grad():
+                            for name, param in model.named_parameters():
+                                if name in global_mask and param.grad is not None:
+                                    # Apply the mask: 1 for parameters to update, 0 for frozen
+                                    param.grad.mul_(global_mask[name])
+                                    
+                                    # Debug logging (first epoch only)
+                                    if epoch == 0 and batch_idx == 0:
+                                        grad_zeros = (param.grad == 0).sum().item()
+                                        grad_total = param.grad.numel()
+                                        wandb.log({
+                                            f"client_{client_id}/grad_zeros_after_mask/{name}": grad_zeros,
+                                            f"client_{client_id}/grad_zeros_percent/{name}": 100 * grad_zeros / grad_total,
+                                            "round": round_num
+                                        })
                     
                     # Update parameters
                     optimizer.step()
@@ -1374,20 +1421,13 @@ class FederatedLearning:
                 # Validation phase
                 val_loss, val_accuracy = self.validate_model(model, val_loader)
                 
-                # Log validation metrics
-                wandb.log({
-                    f"client_{client_id}/val_loss": val_loss,
-                    f"client_{client_id}/val_accuracy": val_accuracy,
-                    "round": round_num,
-                    "epoch": epoch
-                })
-                
-                # Update best model if improved
-                if val_accuracy > best_val_accuracy or (val_accuracy == best_val_accuracy and val_loss < best_val_loss):
+                # Early stopping based on validation metrics
+                if val_accuracy > best_val_accuracy:
                     best_val_accuracy = val_accuracy
                     best_val_loss = val_loss
+                    patience_counter = 0
                     
-                    # Save best model weights if configured
+                    # Save best model weights
                     if hasattr(self.config, 'save_best_models') and self.config.save_best_models:
                         checkpoint_path = f"checkpoints/client_{client_id}_round_{round_num}_best.pt"
                         torch.save(model.state_dict(), checkpoint_path)
@@ -1396,8 +1436,25 @@ class FederatedLearning:
                             f"client_{client_id}/best_model_path": checkpoint_path,
                             "round": round_num
                         })
+                else:
+                    patience_counter += 1
+                    if patience_counter >= max_patience:
+                        wandb.log({
+                            f"client_{client_id}/early_stopping": f"patience {max_patience} reached",
+                            "round": round_num,
+                            "epoch": epoch
+                        })
+                        break
                 
-                # Step the scheduler
+                # Log validation metrics
+                wandb.log({
+                    f"client_{client_id}/val_loss": val_loss,
+                    f"client_{client_id}/val_accuracy": val_accuracy,
+                    "round": round_num,
+                    "epoch": epoch
+                })
+                
+                # Step the scheduler if using batch-based scheduler
                 scheduler.step()
                 
                 # Log learning rate
@@ -1407,6 +1464,21 @@ class FederatedLearning:
                     "round": round_num,
                     "epoch": epoch
                 })
+            
+            # Track parameter changes from training
+            for name, param in model.named_parameters():
+                if name in initial_weights:
+                    # Calculate parameter change magnitude
+                    with torch.no_grad():
+                        param_change = torch.norm(param.data - initial_weights[name])
+                        param_mag = torch.norm(initial_weights[name])
+                        relative_change = param_change / param_mag if param_mag > 0 else torch.tensor(0.0)
+                        
+                        wandb.log({
+                            f"client_{client_id}/param_change/{name}": param_change.item(),
+                            f"client_{client_id}/relative_change/{name}": relative_change.item(),
+                            "round": round_num
+                        })
                 
             # Log final best metrics
             wandb.log({
@@ -1428,11 +1500,11 @@ class FederatedLearning:
     def validate_model(self, model, val_loader):
         """
         Evaluate model on validation data
-        
+
         Args:
             model: Model to evaluate
             val_loader: DataLoader for validation data
-        
+
         Returns:
             tuple: (val_loss, val_accuracy)
         """
@@ -1440,30 +1512,47 @@ class FederatedLearning:
         val_loss = 0.0
         correct = 0
         total = 0
-        
-        with torch.no_grad():
-            for inputs, targets in val_loader:
-                inputs, targets = inputs.to(self.device), targets.to(self.device)
-                
-                # Forward pass
-                outputs = model(inputs)
-                loss = self.config.loss_function(outputs, targets)
-                
-                # Calculate validation metrics
-                val_loss += loss.item()
-                _, predicted = outputs.max(1)
-                total += targets.size(0)
-                correct += predicted.eq(targets).sum().item()
-        
-        # Calculate average validation metrics
-        val_accuracy = 100. * correct / total if total > 0 else 0
-        val_loss = val_loss / len(val_loader) if len(val_loader) > 0 else float('inf')
-        
-        return val_loss, val_accuracy
 
+        # Check if val_loader has samples
+        if len(val_loader) == 0:
+            return float('inf'), 0.0
+
+        try:
+            with torch.no_grad():
+                for inputs, targets in val_loader:
+                    inputs, targets = inputs.to(self.device), targets.to(self.device)
+                    
+                    # Forward pass
+                    outputs = model(inputs)
+                    
+                    # Handle different output shapes based on task
+                    if isinstance(outputs, tuple):
+                        outputs = outputs[0]  # Take first element if it's a tuple
+                    
+                    loss = self.config.loss_function(outputs, targets)
+                    
+                    # Calculate validation metrics based on task
+                    val_loss += loss.item()
+                    
+                    # For classification tasks
+                    if outputs.shape[-1] > 1:  # Multi-class
+                        _, predicted = outputs.max(1)
+                        correct += predicted.eq(targets).sum().item()
+                    else:  # Binary classification
+                        predicted = (outputs > 0.5).float()
+                        correct += predicted.eq(targets).sum().item()
+                    
+                    total += targets.size(0)
             
-
-
+            # Calculate average validation metrics
+            val_accuracy = 100. * correct / total if total > 0 else 0
+            val_loss = val_loss / len(val_loader)
+            
+            return val_loss, val_accuracy
+            
+        except Exception as e:
+            print(f"Error in validate_model: {str(e)}")
+            return float('inf'), 0.0
 
 
 
