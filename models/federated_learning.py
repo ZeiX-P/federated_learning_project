@@ -991,7 +991,7 @@ class FederatedLearning:
     def train_with_global_mask(self, model, train_loader, val_loader, client_id, round):
 
         model.train()
-        optimizer = torch.optim.SGD(model.parameters(), lr=self.config.lr, momentum=0.9)
+        optimizer = self.config.optimizer
         loss_fn = self.config.loss_function
         global_mask = self.global_mask  # Assume this is set somewhere before training
 
