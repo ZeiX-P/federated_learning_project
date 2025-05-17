@@ -1309,7 +1309,7 @@ class FederatedLearning:
         scheduler = torch.optim.lr_scheduler.OneCycleLR(
             optimizer,
             max_lr=self.config.learning_rate,
-            total_steps=len(train_loader) * self.config.local_epochs,
+            total_steps=len(train_loader) * self.config.epochs,
             pct_start=0.3
         )
         
