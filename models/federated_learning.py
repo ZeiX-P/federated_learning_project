@@ -892,6 +892,115 @@ class FederatedLearning:
             
             print(f"Round {round+1} - Global validation accuracy: {global_metrics.get('val_accuracy', 0):.2f}%")
 
+    def train_with_global_mask(self, model, train_loader, val_loader, client_id, round, global_mask):
+        
+        model.train()
+        
+        # Properly initialize optimizer similar to your working code
+        try:
+            if hasattr(self.config, 'optimizer_name') and self.config.optimizer_name == 'sgd':
+                optimizer = torch.optim.SGD(
+                    model.parameters(),
+                    lr=self.config.learning_rate,
+                    momentum=self.config.momentum,
+                    weight_decay=self.config.weight_decay
+                )
+            elif hasattr(self.config, 'optimizer_name') and self.config.optimizer_name == 'adam':
+                optimizer = torch.optim.Adam(
+                    model.parameters(),
+                    lr=self.config.learning_rate,
+                    weight_decay=self.config.weight_decay
+                )
+            else:
+                optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+                print(f"Using default SGD optimizer for client {client_id}")
+        except Exception as e:
+            print(f"Error creating optimizer, using default: {e}")
+            optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+        
+        loss_fn = self.config.loss_function
+
+        # Log mask statistics
+        mask_stats = {}
+        for name, mask in global_mask.items():
+            active_params = mask.sum().item()
+            total_params = mask.numel()
+            percent_active = 100 * active_params / total_params
+            mask_stats[f"{name}_percent_active"] = percent_active
+        
+        avg_percent_active = sum(mask_stats.values()) / len(mask_stats) if mask_stats else 0
+        print(f"Average percent of active parameters: {avg_percent_active:.2f}%")
+        wandb.log({f"client_{client_id}/avg_percent_active": avg_percent_active})
+
+        for epoch in range(self.config.epochs):
+            total_loss = 0
+            correct = 0
+            total = 0
+
+            for inputs, targets in train_loader:
+                # Handle different data types
+                try:
+                    output_dim = getattr(model, 'output_dim', None)
+                    
+                    if isinstance(targets, torch.Tensor) and targets.dtype != torch.long and output_dim == 1:
+                        targets = targets.float()
+                    elif not isinstance(targets, torch.Tensor):
+                        targets = torch.tensor(targets, device=self.device)
+                    else:
+                        targets = targets.long()
+                except Exception as e:
+                    print(f"Error in target processing: {e}")
+                    if not isinstance(targets, torch.Tensor):
+                        targets = torch.tensor(targets, device=self.device)
+                
+                inputs, targets = inputs.to(self.device), targets.to(self.device)
+
+                optimizer.zero_grad()
+                outputs = model(inputs)
+                
+                # Adjust output shape if needed
+                if outputs.shape != targets.shape and outputs.dim() > 1 and outputs.size(1) == 1:
+                    outputs = outputs.squeeze(1)
+                    
+                loss = loss_fn(outputs, targets)
+                loss.backward()
+
+                # Apply global mask: zero gradients for frozen parameters
+                with torch.no_grad():
+                    for name, param in model.named_parameters():
+                        if param.grad is not None and name in global_mask:
+                            param.grad *= global_mask[name]
+
+                optimizer.step()
+
+                total_loss += loss.item() * inputs.size(0)
+                
+                # Calculate accuracy for classification
+                if hasattr(outputs, 'shape') and outputs.dim() > 1 and outputs.size(1) > 1:
+                    _, predicted = outputs.max(1)
+                    total += targets.size(0)
+                    correct += predicted.eq(targets).sum().item()
+
+            avg_loss = total_loss / len(train_loader) if len(train_loader) > 0 else 0
+            accuracy = 100 * correct / total if total > 0 else 0
+
+            print(f"Round {round}, Client {client_id}, Epoch {epoch}, "
+                f"Train Loss: {avg_loss:.4f}, Train Acc: {accuracy:.2f}%")
+                
+            wandb.log({
+                f"client_{client_id}/train_loss": avg_loss,
+                f"client_{client_id}/train_accuracy": accuracy,
+                "epoch": epoch,
+                "round": round
+            })
+
+        # Evaluate on validation set
+        val_metrics = self.validate(model, val_loader)
+        wandb.log({
+            f"client_{client_id}/val_loss": val_metrics["val_loss"],
+            f"client_{client_id}/val_accuracy": val_metrics["val_accuracy"],
+            "round": round
+        })
 
     def compute_fisher_diag(self, model, dataloader, loss_fn):
 
@@ -1017,7 +1126,7 @@ class FederatedLearning:
                 correct += predicted.eq(targets).sum().item()
 
             avg_loss = total_loss / total
-            accuracy = 100. * correct / total
+            accuracy = 100 * correct / total
 
             wandb.log({
                 f"client_{client_id}/train_loss": avg_loss,
