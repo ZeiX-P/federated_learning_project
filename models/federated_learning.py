@@ -882,7 +882,7 @@ class FederatedLearning:
                 train_loader = DataLoader(data_client_train_set, batch_size=self.config.batch_size, shuffle=True)
                 val_loader = DataLoader(data_client_val_set, batch_size=self.config.batch_size, shuffle=False)
                 
-                self.train_with_global_mask(self.local_models[client], train_loader, val_loader, client, round)
+                self.train_with_global_mask(self.local_models[client], train_loader, val_loader, client, round, global_mask)
 
             # Aggregate and evaluate global model
             self.aggregate()
@@ -988,12 +988,12 @@ class FederatedLearning:
 
         return global_mask
 
-    def train_with_global_mask(self, model, train_loader, val_loader, client_id, round):
+    def train_with_global_mask(self, model, train_loader, val_loader, client_id, round ,global_mask):
 
         model.train()
         optimizer = self.config.optimizer
         loss_fn = self.config.loss_function
-        global_mask = self.global_mask  # Assume this is set somewhere before training
+        #global_mask = self.global_mask  # Assume this is set somewhere before training
 
         for epoch in range(self.config.epochs):
             total_loss = 0
