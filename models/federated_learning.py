@@ -891,9 +891,9 @@ class FederatedLearning:
             })
             
             print(f"Round {round+1} - Global validation accuracy: {global_metrics.get('val_accuracy', 0):.2f}%")
-
+'''
     def train_with_global_mask(self, model, train_loader, val_loader, client_id, round, global_mask):
-        
+
         model.train()
         
         # Properly initialize optimizer similar to your working code
@@ -1001,6 +1001,118 @@ class FederatedLearning:
             f"client_{client_id}/val_accuracy": val_metrics["val_accuracy"],
             "round": round
         })
+'''
+
+    def train_with_global_mask(self, model, train_loader, val_loader, client_id, round, global_mask):
+        model.train()
+
+        # Optimizer setup
+        try:
+            if hasattr(self.config, 'optimizer_name') and self.config.optimizer_name == 'sgd':
+                optimizer = torch.optim.SGD(
+                    model.parameters(),
+                    lr=self.config.learning_rate,
+                    momentum=self.config.momentum,
+                    weight_decay=self.config.weight_decay
+                )
+            elif hasattr(self.config, 'optimizer_name') and self.config.optimizer_name == 'adam':
+                optimizer = torch.optim.Adam(
+                    model.parameters(),
+                    lr=self.config.learning_rate,
+                    weight_decay=self.config.weight_decay
+                )
+            else:
+                optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+                print(f"Using default SGD optimizer for client {client_id}")
+        except Exception as e:
+            print(f"Error creating optimizer, using default: {e}")
+            optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+
+        loss_fn = self.config.loss_function
+
+        # Log mask stats
+        for name, mask in global_mask.items():
+            active = mask.sum().item()
+            total = mask.numel()
+            print(f"[Mask] {name}: {active}/{total} active ({100 * active / total:.2f}%)")
+        print("------")
+
+        for epoch in range(self.config.epochs):
+            total_loss = 0
+            correct = 0
+            total = 0
+
+            for batch_idx, (inputs, targets) in enumerate(train_loader):
+                # Target preparation
+                output_dim = getattr(model, 'output_dim', None)
+                if isinstance(targets, torch.Tensor):
+                    if targets.dtype != torch.long and output_dim == 1:
+                        targets = targets.float()
+                    else:
+                        targets = targets.long()
+                else:
+                    targets = torch.tensor(targets, device=self.device)
+
+                inputs, targets = inputs.to(self.device), targets.to(self.device)
+
+                optimizer.zero_grad()
+                outputs = model(inputs)
+
+                # Squeeze outputs if needed
+                if outputs.shape != targets.shape and outputs.dim() > 1 and outputs.size(1) == 1:
+                    outputs = outputs.squeeze(1)
+
+                # Debugging output and target shapes
+                if batch_idx == 0:
+                    print(f"[Debug] Output shape: {outputs.shape}, Target shape: {targets.shape}")
+
+                try:
+                    loss = loss_fn(outputs, targets)
+                except Exception as e:
+                    print(f"Loss function error: {e}")
+                    continue
+
+                loss.backward()
+
+                # Apply mask to gradients
+                with torch.no_grad():
+                    for name, param in model.named_parameters():
+                        if param.grad is not None:
+                            if name in global_mask:
+                                param.grad *= global_mask[name]
+                            else:
+                                print(f"[Warning] No mask for parameter: {name}")
+
+                optimizer.step()
+                total_loss += loss.item() * inputs.size(0)
+
+                # Accuracy (only for classification)
+                if outputs.dim() > 1 and outputs.size(1) > 1:
+                    _, predicted = outputs.max(1)
+                    total += targets.size(0)
+                    correct += predicted.eq(targets).sum().item()
+
+            avg_loss = total_loss / len(train_loader.dataset)
+            accuracy = 100 * correct / total if total > 0 else 0
+
+            print(f"Round {round}, Client {client_id}, Epoch {epoch}, "
+                f"Train Loss: {avg_loss:.4f}, Train Acc: {accuracy:.2f}%")
+
+            wandb.log({
+                f"client_{client_id}/train_loss": avg_loss,
+                f"client_{client_id}/train_accuracy": accuracy,
+                "epoch": epoch,
+                "round": round
+            })
+
+        # Validation
+        val_metrics = self.validate(model, val_loader)
+        wandb.log({
+            f"client_{client_id}/val_loss": val_metrics["val_loss"],
+            f"client_{client_id}/val_accuracy": val_metrics["val_accuracy"],
+            "round": round
+        })
+
 
     def compute_fisher_diag(self, model, dataloader, loss_fn):
 
