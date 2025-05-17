@@ -867,8 +867,9 @@ class FederatedLearning:
 
                     print(f"Client {client} has no training data. Skipping.")
                     continue
-                wandb.log({"event":"not skipped"})
+                
                 fisher = self.compute_fisher_diag(self.local_models[client], train_loader,self.config.loss_function)
+                print(fisher)
                 mask = self.create_fisher_mask(fisher, self.local_models[client], 0.5)
                 dict_local_mask[client] = mask
 
@@ -932,6 +933,8 @@ class FederatedLearning:
             total_samples += 1
 
         fisher_diag /= total_samples
+
+        return fisher_diag
 
 
     def create_fisher_mask(self,fisher_diagonal: torch.Tensor, sparsity_ratio: float, model: nn.Module) -> Dict[str, torch.Tensor]:
