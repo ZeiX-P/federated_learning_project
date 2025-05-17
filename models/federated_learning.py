@@ -861,12 +861,7 @@ class FederatedLearning:
                 data_client_train_set = self.dict_train_client_data[client]
 
                 train_loader = DataLoader(data_client_train_set, batch_size=self.config.batch_size, shuffle=True)
-                if len(data_client_train_set) == 0:
-                    
-                    wandb.log({"event": f"Skipped client {client} due to no training data"})
-
-                    print(f"Client {client} has no training data. Skipping.")
-                    continue
+                
                 
                 fisher = self.compute_fisher_diag(self.local_models[client], train_loader,self.config.loss_function)
                 
