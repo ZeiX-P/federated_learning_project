@@ -1266,8 +1266,202 @@ class FederatedLearning:
             })
             # Return all-ones mask as fallback
             return {name: torch.ones_like(param) for name, param in model.named_parameters()}
-
         
+
+    def train_with_global_mask(self, model, train_loader, val_loader, client_id, round_num):
+        """
+        Train a local model while applying a global mask to control which parameters get updated.
+        
+        Args:
+            model: The local model to train
+            train_loader: DataLoader for the training data
+            val_loader: DataLoader for the validation data
+            client_id: ID of the current client
+            round_num: Current round number
+        """
+        wandb.log({f"client_{client_id}/training": "started", "round": round_num})
+        
+        # Set model to training mode
+        model.train()
+        
+        # Initialize optimizer and learning rate scheduler
+        optimizer = torch.optim.SGD(
+            model.parameters(), 
+            lr=self.config.learning_rate,
+            momentum=0.9,
+            weight_decay=self.config.weight_decay
+        )
+        
+        # Optional: learning rate scheduler
+        scheduler = torch.optim.lr_scheduler.StepLR(
+            optimizer, 
+            step_size=5, 
+            gamma=0.1
+        )
+        
+        # Track training progress
+        best_val_accuracy = 0.0
+        best_val_loss = float('inf')
+        
+        try:
+            # Get the current global mask if available
+            global_mask = getattr(self, 'global_mask', None)
+            
+            # Log whether we're using a mask
+            wandb.log({
+                f"client_{client_id}/using_mask": global_mask is not None,
+                "round": round_num
+            })
+            
+            for epoch in range(self.config.local_epochs):
+                # Training phase
+                model.train()
+                train_loss = 0.0
+                correct = 0
+                total = 0
+                
+                for batch_idx, (inputs, targets) in enumerate(train_loader):
+                    inputs, targets = inputs.to(self.device), targets.to(self.device)
+                    
+                    # Zero out gradients
+                    optimizer.zero_grad()
+                    
+                    # Forward pass
+                    outputs = model(inputs)
+                    loss = self.config.loss_function(outputs, targets)
+                    
+                    # Backward pass
+                    loss.backward()
+                    
+                    # Apply mask to gradients if available
+                    if global_mask:
+                        for name, param in model.named_parameters():
+                            if name in global_mask:
+                                # Zero out gradients for parameters that should be frozen
+                                # Note: mask is 1 for parameters to update, 0 for frozen params
+                                param.grad *= global_mask[name]
+                    
+                    # Update parameters
+                    optimizer.step()
+                    
+                    # Calculate training metrics
+                    train_loss += loss.item()
+                    _, predicted = outputs.max(1)
+                    total += targets.size(0)
+                    correct += predicted.eq(targets).sum().item()
+                    
+                    # Log batch metrics
+                    if batch_idx % 10 == 0:  # Log every 10 batches
+                        wandb.log({
+                            f"client_{client_id}/batch_train_loss": loss.item(),
+                            f"client_{client_id}/batch_train_accuracy": 100. * predicted.eq(targets).sum().item() / targets.size(0),
+                            "round": round_num,
+                            "epoch": epoch
+                        })
+                
+                # Calculate epoch training metrics
+                train_accuracy = 100. * correct / total
+                train_loss = train_loss / len(train_loader)
+                
+                # Log epoch training metrics
+                wandb.log({
+                    f"client_{client_id}/train_loss": train_loss,
+                    f"client_{client_id}/train_accuracy": train_accuracy,
+                    "round": round_num,
+                    "epoch": epoch
+                })
+                
+                # Validation phase
+                val_loss, val_accuracy = self.validate_model(model, val_loader)
+                
+                # Log validation metrics
+                wandb.log({
+                    f"client_{client_id}/val_loss": val_loss,
+                    f"client_{client_id}/val_accuracy": val_accuracy,
+                    "round": round_num,
+                    "epoch": epoch
+                })
+                
+                # Update best model if improved
+                if val_accuracy > best_val_accuracy or (val_accuracy == best_val_accuracy and val_loss < best_val_loss):
+                    best_val_accuracy = val_accuracy
+                    best_val_loss = val_loss
+                    
+                    # Save best model weights if configured
+                    if hasattr(self.config, 'save_best_models') and self.config.save_best_models:
+                        checkpoint_path = f"checkpoints/client_{client_id}_round_{round_num}_best.pt"
+                        torch.save(model.state_dict(), checkpoint_path)
+                        wandb.log({
+                            f"client_{client_id}/best_model_saved": True,
+                            f"client_{client_id}/best_model_path": checkpoint_path,
+                            "round": round_num
+                        })
+                
+                # Step the scheduler
+                scheduler.step()
+                
+                # Log learning rate
+                current_lr = scheduler.get_last_lr()[0]
+                wandb.log({
+                    f"client_{client_id}/learning_rate": current_lr,
+                    "round": round_num,
+                    "epoch": epoch
+                })
+                
+            # Log final best metrics
+            wandb.log({
+                f"client_{client_id}/best_val_accuracy": best_val_accuracy,
+                f"client_{client_id}/best_val_loss": best_val_loss,
+                "round": round_num
+            })
+            
+            return model
+            
+        except Exception as e:
+            wandb.log({
+                f"client_{client_id}/training_error": str(e),
+                f"client_{client_id}/training_error_type": str(type(e).__name__),
+                "round": round_num
+            })
+            return model
+
+    def validate_model(self, model, val_loader):
+        """
+        Evaluate model on validation data
+        
+        Args:
+            model: Model to evaluate
+            val_loader: DataLoader for validation data
+        
+        Returns:
+            tuple: (val_loss, val_accuracy)
+        """
+        model.eval()
+        val_loss = 0.0
+        correct = 0
+        total = 0
+        
+        with torch.no_grad():
+            for inputs, targets in val_loader:
+                inputs, targets = inputs.to(self.device), targets.to(self.device)
+                
+                # Forward pass
+                outputs = model(inputs)
+                loss = self.config.loss_function(outputs, targets)
+                
+                # Calculate validation metrics
+                val_loss += loss.item()
+                _, predicted = outputs.max(1)
+                total += targets.size(0)
+                correct += predicted.eq(targets).sum().item()
+        
+        # Calculate average validation metrics
+        val_accuracy = 100. * correct / total if total > 0 else 0
+        val_loss = val_loss / len(val_loader) if len(val_loader) > 0 else float('inf')
+        
+        return val_loss, val_accuracy
+
+            
 
 
 
