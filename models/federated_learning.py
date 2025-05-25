@@ -981,7 +981,7 @@ class FederatedLearning:
                 dict_fisher_scores[client] = fisher_named
 
                 # Step 2: Grad-CAM (semantic attribution)
-                feature_sig = extract_param_feature_map(self.local_models[client], train_loader, self.config.device)
+                feature_sig = extract_param_feature_map(self.local_models[client], train_loader, self.device)
                 dict_feature_signatures[client] = feature_sig
 
                 # Step 3: Build adaptive mask
