@@ -12,16 +12,10 @@ def compute_model_diff(self, model_before, model_after):
             diff[name] = p_after.data.clone() - p_before.data.clone()
     return diff
 
-
 def copy_model(original_model):
-    """
-    Create a deep copy of a PyTorch model
-    """
-    # Method 1: Using deepcopy
+    
+    
     copied_model = copy.deepcopy(original_model)
-    
-    # Method 2: Using state_dict (recommended for larger models)
-    model_copy = type(original_model)()  # Create new instance
-    model_copy.load_state_dict(original_model.state_dict())
-    
-    return model_copy
+    copied_model.to(next(original_model.parameters()).device)
+
+    return copied_model
