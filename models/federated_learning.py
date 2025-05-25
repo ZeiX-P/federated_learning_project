@@ -982,7 +982,7 @@ class FederatedLearning:
 
                 # Step 2: Grad-CAM (semantic attribution)
 
-                temp_model_for_gradcam = self.copy_model(self.local_models[client])
+                temp_model_for_gradcam = copy_model(self.local_models[client])
                 for param in temp_model_for_gradcam.parameters():
                     param.requires_grad = True # Enable gradients for all params in the temporary copy
 
