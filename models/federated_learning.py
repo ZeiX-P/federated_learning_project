@@ -7,7 +7,9 @@ import copy
 from models.train import train_with_global_mask
 from typing import Optional, Dict, Union
 from torch import nn
-
+from utils.cam_utils import extract_param_feature_map
+from collections import defaultdict
+from utils.models_utils import apply_model_diff, compute_model_diff
 '''
 class FederatedLearning:
 
@@ -843,7 +845,7 @@ class FederatedLearning:
         
         return self.validate(self.global_model, val_loader)
     
-    def run_model_editing(self):
+    def run_model_editing_global(self):
 
         for round in range(self.num_rounds):
             print(f"--- Round {round+1}/{self.num_rounds} ---")
@@ -880,7 +882,142 @@ class FederatedLearning:
             })
 
             print(f"Round {round+1} - Global validation accuracy: {global_metrics.get('val_accuracy', 0):.2f}%")
-        
+
+
+    def run_model_editing_talos(self):
+        for round in range(self.num_rounds):
+            wandb.log({"round": round, "round_progress": (round + 1) / self.num_rounds * 100})
+
+            num_selected_clients = max(1, int(self.client_fraction * self.num_clients))
+            selected_clients = random.sample(range(self.num_clients), num_selected_clients)
+
+            wandb.log({
+                "active_clients": num_selected_clients,
+                "selected_clients": selected_clients
+            })
+
+            dict_fisher_scores = {}
+            dict_client_masks = {}
+
+            # Step 1: Compute local Fisher + create local mask per client
+            for client in selected_clients:
+                train_loader = DataLoader(
+                    self.dict_train_client_data[client],
+                    batch_size=self.config.batch_size,
+                    shuffle=True
+                )
+
+                fisher = self.compute_fisher_diag(
+                    self.local_models[client], train_loader, self.config.loss_function
+                )
+                fisher_named = self.reshape_fisher_to_named(fisher, self.local_models[client])
+                dict_fisher_scores[client] = fisher_named
+
+                local_mask = self.create_mask_from_fisher(fisher_named, top_k=0.5)
+                dict_client_masks[client] = local_mask
+
+                wandb.log({
+                    f"client_{client}/mask_sparsity": sum(1 for v in local_mask.values() if v.sum() == 0) / len(local_mask),
+                    f"client_{client}/fisher_norm": sum(v.norm().item() for v in fisher_named.values())
+                })
+
+            # Step 2: Train clients with their own masks
+            for client in selected_clients:
+                train_loader = DataLoader(
+                    self.dict_train_client_data[client],
+                    batch_size=self.config.batch_size,
+                    shuffle=True
+                )
+                val_loader = DataLoader(
+                    self.dict_val_client_data[client],
+                    batch_size=self.config.batch_size,
+                    shuffle=False
+                )
+
+                self.train_with_global_mask(
+                    self.local_models[client],
+                    train_loader,
+                    val_loader,
+                    client,
+                    round,
+                    dict_client_masks[client]
+                )
+
+            # Step 3: Federated aggregation
+            self.aggregate()
+
+            # Step 4: Evaluate and log global model
+            global_metrics = self.evaluate_global_model()
+            wandb.log({
+                "global/val_loss": global_metrics["val_loss"],
+                "global/val_accuracy": global_metrics.get("val_accuracy", 0)
+            })
+
+
+    def run_model_editing_fsmm(self):
+        for round in range(self.num_rounds):
+            wandb.log({"round": round, "round_progress": (round + 1) / self.num_rounds * 100})
+
+            num_selected_clients = max(1, int(self.client_fraction * self.num_clients))
+            selected_clients = random.sample(range(self.num_clients), num_selected_clients)
+
+            wandb.log({
+                "active_clients": num_selected_clients,
+                "selected_clients": selected_clients
+            })
+
+            dict_fisher_scores = {}
+            dict_feature_signatures = {}
+            dict_local_updates = {}
+            dict_local_masks = {}
+
+            # Phase 1: Client Processing
+            for client in selected_clients:
+                train_loader = DataLoader(self.dict_train_client_data[client], batch_size=self.config.batch_size, shuffle=True)
+
+                # Step 1: Compute Fisher (sensitivity)
+                fisher = self.compute_fisher_diag(self.local_models[client], train_loader, self.config.loss_function)
+                fisher_named = self.reshape_fisher_to_named(fisher, self.local_models[client])
+                dict_fisher_scores[client] = fisher_named
+
+                # Step 2: Grad-CAM (semantic attribution)
+                feature_sig = extract_param_feature_map(self.local_models[client], train_loader, self.config.device)
+                dict_feature_signatures[client] = feature_sig
+
+                # Step 3: Build adaptive mask
+                adaptive_mask = {}
+                for name in fisher_named:
+                    fisher_tensor = fisher_named[name]
+                    sig_val = feature_sig.get(name, 0.0)
+                    threshold = torch.quantile(fisher_tensor.view(-1), 0.5)  # Mid-sensitivity
+                    mask = (fisher_tensor < threshold).float()
+                    if sig_val > 0.1:  # Heuristically filter semantically important params
+                        adaptive_mask[name] = mask
+                    else:
+                        adaptive_mask[name] = torch.zeros_like(mask)
+                dict_local_masks[client] = adaptive_mask
+
+                # Step 4: Train with adaptive mask
+                val_loader = DataLoader(self.dict_val_client_data[client], batch_size=self.config.batch_size, shuffle=False)
+                local_model_before = self.copy_model(self.local_models[client])
+                self.train_with_global_mask(self.local_models[client], train_loader, val_loader, client, round, adaptive_mask)
+                local_update = self.compute_model_diff(local_model_before, self.local_models[client])
+                dict_local_updates[client] = local_update
+
+            # Phase 2: Server Aggregation
+            aggregated_update = self.adaptive_merge(dict_local_updates, dict_local_masks, dict_feature_signatures)
+
+            # Step 5: Apply update
+            self.apply_model_diff(self.global_model, aggregated_update)
+
+            # Step 6: Evaluate
+            global_metrics = self.evaluate_global_model()
+            wandb.log({
+                "global/val_loss": global_metrics["val_loss"],
+                "global/val_accuracy": global_metrics.get("val_accuracy", 0)
+            })
+
+
     def compute_fisher_diag(self, model, dataloader, loss_fn):
 
         fisher_diag = None 
@@ -1054,6 +1191,48 @@ class FederatedLearning:
             f"client_{client_id}/val_accuracy": val_metrics["val_accuracy"],
             "round": round
         })
+
+    def adaptive_merge(self, dict_updates, dict_masks, dict_signatures, conflict_threshold=0.1):
+    
+
+        aggregated = {}
+        param_updates = defaultdict(list)
+
+        # Step 1: Collect updates per parameter
+        for client_id in dict_updates:
+            update = dict_updates[client_id]
+            mask = dict_masks[client_id]
+
+            for name, delta in update.items():
+                if name in mask:
+                    masked_delta = delta * mask[name]
+                    param_updates[name].append(masked_delta)
+
+        # Step 2: Aggregate with conflict analysis
+        for name, updates in param_updates.items():
+            if len(updates) == 1:
+                aggregated[name] = updates[0]
+            else:
+                stacked = torch.stack(updates)
+                # Conflict score = variance of updates across clients
+                conflict_score = torch.var(stacked, dim=0).mean().item()
+
+                if conflict_score < conflict_threshold:
+                    # Low conflict → mean
+                    aggregated[name] = torch.mean(stacked, dim=0)
+                else:
+                    # High conflict → robust aggregation (median or discard)
+                    # Option A: median
+                    aggregated[name] = torch.median(stacked, dim=0).values
+                    # Option B: freeze param
+                    # aggregated[name] = torch.zeros_like(stacked[0])
+        return aggregated
+
+
+
+            
+
+
 
     
     def __del__(self):

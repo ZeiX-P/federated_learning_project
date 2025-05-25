@@ -38,16 +38,16 @@ if __name__ == "__main__":
                           optimizer_class=torch.optim.SGD,
                           loss_function=nn.CrossEntropyLoss(),
                           scheduler_class=torch.optim.lr_scheduler.CosineAnnealingLR,
-                          epochs=25,
+                          epochs=10,
                           optimizer_params={"momentum": 0.9, "weight_decay": 5e-4},
                           scheduler_params={"T_max": 20})
 
     federated_learning = FederatedLearning(global_model=dino,data=data, num_clients=10, 
-                                           aggregation_method="FedAvg", num_rounds=10,
+                                           aggregation_method="FedAvg", num_rounds=2,
                                             epochs_per_round=3, distribution_type="iid",
                                             client_fraction=0.5,config=config1)
     
     print("Starting Federated Learning process...")
-    federated_learning.run_model_editing()
+    federated_learning.run_model_editing_fsmm()
 
     print("Federated Learning process completed.")
