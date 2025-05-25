@@ -989,7 +989,7 @@ class FederatedLearning:
                 # Ensure the temporary model is in evaluation mode for feature extraction
                 temp_model_for_gradcam.eval()
 
-                feature_sig = extract_param_feature_map(temp_model_for_gradcam, train_loader, self.device,temp_model_for_gradcam[client].blocks[-1].norm1)
+                feature_sig = extract_param_feature_map(temp_model_for_gradcam, train_loader, self.device,temp_model_for_gradcam.blocks[-1].norm1)
                 dict_feature_signatures[client] = feature_sig
 
                 # Step 3: Build adaptive mask
