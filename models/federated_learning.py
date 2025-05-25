@@ -9,7 +9,7 @@ from typing import Optional, Dict, Union
 from torch import nn
 from utils.cam_utils import extract_param_feature_map
 from collections import defaultdict
-from utils.models_utils import apply_model_diff, compute_model_diff
+from utils.models_utils import apply_model_diff, compute_model_diff, copy_model
 '''
 class FederatedLearning:
 
@@ -981,7 +981,7 @@ class FederatedLearning:
                 dict_fisher_scores[client] = fisher_named
 
                 # Step 2: Grad-CAM (semantic attribution)
-                feature_sig = extract_param_feature_map(self.local_models[client], train_loader, self.device)
+                feature_sig = extract_param_feature_map(self.local_models[client], train_loader, self.device,self.local_models[client].blocks[-1].norm1)
                 dict_feature_signatures[client] = feature_sig
 
                 # Step 3: Build adaptive mask
@@ -999,16 +999,16 @@ class FederatedLearning:
 
                 # Step 4: Train with adaptive mask
                 val_loader = DataLoader(self.dict_val_client_data[client], batch_size=self.config.batch_size, shuffle=False)
-                local_model_before = self.copy_model(self.local_models[client])
+                local_model_before = copy_model(self.local_models[client])
                 self.train_with_global_mask(self.local_models[client], train_loader, val_loader, client, round, adaptive_mask)
-                local_update = self.compute_model_diff(local_model_before, self.local_models[client])
+                local_update = compute_model_diff(local_model_before, self.local_models[client])
                 dict_local_updates[client] = local_update
 
             # Phase 2: Server Aggregation
             aggregated_update = self.adaptive_merge(dict_local_updates, dict_local_masks, dict_feature_signatures)
 
             # Step 5: Apply update
-            self.apply_model_diff(self.global_model, aggregated_update)
+            apply_model_diff(self.global_model, aggregated_update)
 
             # Step 6: Evaluate
             global_metrics = self.evaluate_global_model()
