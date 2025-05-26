@@ -151,7 +151,7 @@ def train_model_with_mask(
 
     # ---- Step 1: Compute Fisher Info and Mask ----
     fisher_info = compute_fisher_information(model, train_loader, device, loss_func, num_samples=fisher_samples)
-    global_mask = generate_global_mask(fisher_info, top_k=top_k_mask)
+    global_mask = generate_global_mask1(fisher_info, top_k=top_k_mask, strategy="random")
 
     # ---- Step 2: Train Model with Mask ----
     for epoch in range(1, num_epochs + 1):
