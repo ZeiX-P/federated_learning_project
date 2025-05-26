@@ -583,21 +583,7 @@ class FederatedLearning:
         if val_loader is not None:
             assert isinstance(val_loader, DataLoader)
 
-        use_wandb = wandb_log or wandb_save
-        if use_wandb:
-            if self.config.project_name is None:
-                raise ValueError("project_name cannot be None if using wandb.")
-            wandb.init(
-                project=self.config.project_name,
-                name=f"{self.config.training_name}_client{client_id}_round{round_id}",
-                config={
-                    "epochs": self.config.epochs,
-                    "batch_size": train_loader.batch_size,
-                    "learning_rate": self.config.learning_rate,
-                    "architecture": self.config.model.__class__.__name__,
-                },
-            )
-
+       
         model = model.to(self.device)
         loss_func = self.config.loss_function
         optimizer = self.config.optimizer_class
@@ -649,7 +635,7 @@ class FederatedLearning:
                 correct += predicted.eq(targets).sum().item()
 
             if scheduler is not None:
-                scheduler.step()
+                scheduler.step
 
             train_loss = running_loss / total
             train_accuracy = 100.0 * correct / total
