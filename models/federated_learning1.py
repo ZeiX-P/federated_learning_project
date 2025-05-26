@@ -444,7 +444,6 @@ class FederatedLearning:
                 "selected_clients": selected_clients
             })
 
-            dict_fisher_scores = {}
             dict_client_masks = {}
 
             # Step 1: Compute local Fisher + create local mask per client
@@ -455,15 +454,11 @@ class FederatedLearning:
                     shuffle=True
                 )
 
-       
-        
-
                 fisher_info = self.compute_fisher_information(
-                    self.local_models[client], train_loader, self.config.loss_function
+                    self.local_models[client], train_loader, self.device, num_samples=100
                 )
-    
 
-                local_mask = self.generate_global_mask1(fisher_info, top_k=0.5)
+                local_mask = self.generate_global_mask1(fisher_info, top_k=0.5, strategy="fisher_most")
                 dict_client_masks[client] = local_mask
 
                 wandb.log({
@@ -503,39 +498,19 @@ class FederatedLearning:
                 "global/val_accuracy": global_metrics.get("val_accuracy", 0)
             })
 
-
-    def generate_global_mask1(self, fisher_info, top_k: float = 0.2, strategy: str = "fisher_least"):
-        if strategy.startswith("fisher"):
-            all_scores = torch.cat([f.view(-1) for f in fisher_info.values()])
-            if strategy == "fisher_least":
-                threshold = torch.quantile(all_scores, top_k)
-                compare = lambda x: x <= threshold
-            elif strategy == "fisher_most":
-                threshold = torch.quantile(all_scores, 1 - top_k)
-                compare = lambda x: x >= threshold
+    def generate_global_mask1(self, fisher_info, top_k: float = 0.2, strategy: str = "fisher_most"):
+        mask = {}
+        for name, tensor in fisher_info.items():
+            flat_tensor = tensor.view(-1)
+            if strategy == "fisher_most":
+                threshold = torch.quantile(flat_tensor, 1 - top_k)
+                mask_tensor = (tensor >= threshold).float()
+            elif strategy == "fisher_least":
+                threshold = torch.quantile(flat_tensor, top_k)
+                mask_tensor = (tensor <= threshold).float()
             else:
-                raise ValueError(f"Unknown Fisher strategy: {strategy}")
-            mask = {name: compare(tensor).float() for name, tensor in fisher_info.items()}
-
-        elif strategy in {"magnitude_lowest", "magnitude_highest"}:
-            all_params = torch.cat([p.view(-1).abs() for p in fisher_info.values()])
-            if strategy == "magnitude_lowest":
-                threshold = torch.quantile(all_params, top_k)
-                compare = lambda x: x.abs() <= threshold
-            else:
-                threshold = torch.quantile(all_params, 1 - top_k)
-                compare = lambda x: x.abs() >= threshold
-            mask = {name: compare(p).float() for name, p in fisher_info.items()}
-
-        elif strategy == "random":
-            mask = {
-                name: (torch.rand_like(p) < top_k).float()
-                for name, p in fisher_info.items()
-            }
-
-        else:
-            raise ValueError(f"Unknown strategy: {strategy}")
-
+                raise ValueError(f"Unknown strategy: {strategy}")
+            mask[name] = mask_tensor
         return mask
 
     def compute_fisher_information(self, model, dataloader, device, num_samples=100):
@@ -549,7 +524,7 @@ class FederatedLearning:
         for inputs, targets in dataloader:
             if count >= num_samples:
                 break
-            inputs, targets = inputs.to(self.device), targets.to(self.device)
+            inputs, targets = inputs.to(device), targets.to(device)
             model.zero_grad()
             outputs = model(inputs)
             loss = self.config.loss_function(outputs, targets)
@@ -566,37 +541,17 @@ class FederatedLearning:
 
         return fisher
 
-
-
-    def train_model_with_mask(
-    self,
-    model,
-    *,
-    train_loader: DataLoader,
-    val_loader: Optional[DataLoader] = None,
-    client_id: Optional[int] = None,
-    round_id: Optional[int] = None,
-    wandb_log: bool = True,
-    wandb_save: bool = True,
-    fisher_mask: Optional[dict] = None,
-) -> dict:
-        assert train_loader is not None
-        if val_loader is not None:
-            assert isinstance(val_loader, DataLoader)
-
+    def train_model_with_mask(self, model, *, train_loader, val_loader=None, client_id=None, round_id=None, wandb_log=True, wandb_save=True, fisher_mask=None):
         model = model.to(self.device)
         loss_func = self.config.loss_function
         optimizer = self.config.optimizer_class(model.parameters(), lr=self.config.learning_rate)
 
+        scheduler = None
         if self.config.scheduler_class is not None:
-            scheduler = self.config.scheduler_class(optimizer,T_max=self.config.epochs)
-        else:
-            scheduler = None
+            scheduler = self.config.scheduler_class(optimizer, T_max=self.config.epochs)
 
-        num_epochs = self.config.epochs
         best_acc = 0
 
-        # Log mask stats
         if fisher_mask:
             total_params = 0
             zeroed_params = 0
@@ -611,27 +566,24 @@ class FederatedLearning:
                     f"client{client_id}_round{round_id}/Sparsity (%)": 100.0 * zeroed_params / total_params
                 })
 
-        # ---- Training with mask ----
-        for epoch in range(1, num_epochs + 1):
+        for epoch in range(1, self.config.epochs + 1):
             model.train()
-            running_loss = 0.0
-            correct, total = 0, 0
+            running_loss, correct, total = 0.0, 0, 0
 
             for inputs, targets in train_loader:
                 inputs, targets = inputs.to(self.device), targets.to(self.device)
 
                 preds = model(inputs)
                 loss = loss_func(preds, targets)
-
                 optimizer.zero_grad()
                 loss.backward()
 
-                # Apply Fisher mask to gradients
                 if fisher_mask:
                     with torch.no_grad():
                         for name, param in model.named_parameters():
                             if name in fisher_mask and param.grad is not None:
-                                param.grad.mul_(fisher_mask[name])
+                                if param.grad.shape == fisher_mask[name].shape:
+                                    param.grad.mul_(fisher_mask[name])
 
                 optimizer.step()
                 running_loss += loss.item() * targets.size(0)
@@ -649,16 +601,15 @@ class FederatedLearning:
                 wandb.log({
                     f"client{client_id}_round{round_id}/Epoch": epoch,
                     f"client{client_id}_round{round_id}/Train Loss": train_loss,
-                    f"client{client_id}_round{round_id}/Train Accuracy": train_accuracy,
+                    f"client{client_id}_round{round_id}/Train Accuracy": train_accuracy
                 })
 
             if val_loader:
                 _, _, val_loss, val_accuracy = self.compute_predictions(model, val_loader, self.device, loss_func)
-
                 if wandb_log:
                     wandb.log({
                         f"client{client_id}_round{round_id}/Val Loss": val_loss,
-                        f"client{client_id}_round{round_id}/Val Accuracy": val_accuracy,
+                        f"client{client_id}_round{round_id}/Val Accuracy": val_accuracy
                     })
 
                 if val_accuracy > best_acc:
@@ -668,12 +619,9 @@ class FederatedLearning:
                         torch.save(model.state_dict(), model_name)
                         wandb.save(model_name)
 
-        
-
         return {"model": model, "best_accuracy": best_acc}
 
-
-    def compute_predictions(self, model: nn.Module, dataloader: DataLoader, device: torch.device, loss_function: Optional[nn.Module] = None):
+    def compute_predictions(self, model, dataloader, device, loss_function=None):
         model.eval()
         predictions, labels = [], []
         total_loss, total_samples = 0.0, 0
@@ -682,11 +630,9 @@ class FederatedLearning:
             for inputs, targets in dataloader:
                 inputs, targets = inputs.to(device), targets.to(device)
                 preds = model(inputs)
-
                 if loss_function is not None:
                     total_loss += loss_function(preds, targets).item() * targets.size(0)
                     total_samples += targets.size(0)
-
                 _, predicted = torch.max(preds, 1)
                 predictions.append(predicted)
                 labels.append(targets)
