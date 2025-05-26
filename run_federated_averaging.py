@@ -1,7 +1,7 @@
 
 from config import Configuration
 from dataset.data import Dataset
-from models.federated_learning import FederatedLearning
+from models.federated_learning1 import FederatedLearning
 import timm
 import torch
 import torch.nn as nn
