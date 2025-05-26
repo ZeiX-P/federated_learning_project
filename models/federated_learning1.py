@@ -568,7 +568,8 @@ class FederatedLearning:
 
 
 
-    def train_model_with_mask(self,
+    def train_model_with_mask(
+    self,
     model,
     *,
     train_loader: DataLoader,
@@ -583,11 +584,15 @@ class FederatedLearning:
         if val_loader is not None:
             assert isinstance(val_loader, DataLoader)
 
-       
         model = model.to(self.device)
         loss_func = self.config.loss_function
-        optimizer = self.config.optimizer_class
-        scheduler = self.config.scheduler_class
+        optimizer = self.config.optimizer_class(model.parameters(), lr=self.config.learning_rate)
+
+        if self.config.scheduler_class is not None:
+            scheduler = self.config.scheduler_class(optimizer)
+        else:
+            scheduler = None
+
         num_epochs = self.config.epochs
         best_acc = 0
 
@@ -618,7 +623,7 @@ class FederatedLearning:
                 preds = model(inputs)
                 loss = loss_func(preds, targets)
 
-                optimizer.zero_grad
+                optimizer.zero_grad()
                 loss.backward()
 
                 # Apply Fisher mask to gradients
@@ -628,14 +633,14 @@ class FederatedLearning:
                             if name in fisher_mask and param.grad is not None:
                                 param.grad.mul_(fisher_mask[name])
 
-                optimizer.step
+                optimizer.step()
                 running_loss += loss.item() * targets.size(0)
                 _, predicted = preds.max(1)
                 total += targets.size(0)
                 correct += predicted.eq(targets).sum().item()
 
             if scheduler is not None:
-                scheduler.step
+                scheduler.step()
 
             train_loss = running_loss / total
             train_accuracy = 100.0 * correct / total
@@ -663,8 +668,7 @@ class FederatedLearning:
                         torch.save(model.state_dict(), model_name)
                         wandb.save(model_name)
 
-        if use_wandb:
-            wandb.finish()
+        
 
         return {"model": model, "best_accuracy": best_acc}
 
