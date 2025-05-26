@@ -1081,7 +1081,7 @@ class FederatedLearning:
         flat_fisher = torch.cat([v.flatten() for v in fisher_dict.values()])
         threshold_value = torch.kthvalue(flat_fisher, int(top_k * flat_fisher.numel())).values
         return {
-            k: (v >= threshold_value).float()
+            k: (v < threshold_value).float()
             for k, v in fisher_dict.items()
         }
 
