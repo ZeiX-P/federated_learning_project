@@ -16,10 +16,12 @@ class Configuration:
         dataset: str,
         loss_function: nn.Module,
         epochs: int,
+        project_name,
         optimizer_class: type = optim.Adam,
         scheduler_class: Optional[type] = None,
         optimizer_params: Optional[Dict] = None,
         scheduler_params: Optional[Dict] = None,
+        
     ):
         self.model = model
         self.training_name = training_name
@@ -34,6 +36,7 @@ class Configuration:
         self.scheduler_class = scheduler_class
         self.optimizer_params = optimizer_params or {}
         self.scheduler_params = scheduler_params or {}
+        self.project_name = project_name
 
         # Now correctly store instances, not class names
         self.optimizer = self._init_optimizer()

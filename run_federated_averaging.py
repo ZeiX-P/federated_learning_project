@@ -40,7 +40,8 @@ if __name__ == "__main__":
                           scheduler_class=torch.optim.lr_scheduler.CosineAnnealingLR,
                           epochs=10,
                           optimizer_params={"momentum": 0.9, "weight_decay": 5e-4},
-                          scheduler_params={"T_max": 20})
+                          scheduler_params={"T_max": 20},
+                          project_name="federated_learning_model_editing_talos")
 
     federated_learning = FederatedLearning(global_model=dino,data=data, num_clients=6, 
                                            aggregation_method="FedAvg", num_rounds=3,
