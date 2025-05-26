@@ -674,7 +674,7 @@ class FederatedLearning:
                 if val_accuracy > best_acc:
                     best_acc = val_accuracy
                     if wandb_save:
-                        model_name = f"{training_params.training_name}_client{client_id}_round{round_id}_best.pth"
+                        model_name = f"{self.config.training_name}_client{client_id}_round{round_id}_best.pth"
                         torch.save(model.state_dict(), model_name)
                         wandb.save(model_name)
 
