@@ -498,7 +498,7 @@ class FederatedLearning:
                 "global/val_accuracy": global_metrics.get("val_accuracy", 0)
             })
 
-    def generate_global_mask1(self, fisher_info, top_k: float = 0.2, strategy: str = "fisher_most"):
+    def generate_global_mask1(self, fisher_info, top_k: float = 0.2, strategy: str = "fisher_least"):
         mask = {}
         for name, tensor in fisher_info.items():
             flat_tensor = tensor.view(-1)
