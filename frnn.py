@@ -10,6 +10,8 @@ from config import Configuration
 from torchcam.methods import GradCAM
 import copy
 from collections import defaultdict
+import matplotlib.pyplot as plt
+import numpy as np
 
 
 def apply_model_diff(self, global_model, update_dict):
@@ -34,32 +36,23 @@ def extract_param_feature_map(model, dataloader, device, target_layer):
     model.to(device)
     model.eval()
 
-    # Ensure model parameters require gradients
     for param in model.parameters():
         param.requires_grad = True
 
-    # Initialize CAM extractor
     extractor = GradCAM(model, target_layer=target_layer)
-
     cam_maps = {}
 
-    # Only compute CAM for the first batch
     with torch.enable_grad():
         for batch_idx, (images, labels) in enumerate(dataloader):
             images = images.to(device)
             images.requires_grad = True
 
-            # Forward pass
             outputs = model(images)
             preds = outputs.argmax(dim=1)
 
-            # Compute CAMs
             cams = extractor(class_idx=preds.tolist(), scores=outputs)
-
-            # Store CAMs
             cam_maps[f'batch_{batch_idx}'] = cams
-
-            break  # Only use one batch
+            break
 
     return cam_maps
 
@@ -173,14 +166,12 @@ def train_model_with_mask(
     num_epochs = training_params.epochs
     best_acc = 0
 
-    # ---- Step 1: Compute Fisher Info and Grad-CAM Scores ----
     fisher_info = compute_fisher_information(model, train_loader, device, loss_func, num_samples=fisher_samples)
-    target_layer = model.blocks[-1].norm1  # Specific to ViT, adjust as needed
+    target_layer = model.blocks[-1].norm1
     cam_signatures = extract_param_feature_map(model, train_loader, device, target_layer)
     combined_scores = combine_scores(fisher_info, cam_signatures, alpha=0.7)
     global_mask = generate_global_mask(combined_scores, top_k=top_k_mask)
 
-    # ---- Step 2: Train Model with Mask ----
     for epoch in range(1, num_epochs + 1):
         model.train()
         running_loss = 0.0
@@ -188,10 +179,8 @@ def train_model_with_mask(
 
         for inputs, targets in train_loader:
             inputs, targets = inputs.to(device), targets.to(device)
-
             preds = model(inputs)
             loss = loss_func(preds, targets)
-
             optimizer.zero_grad()
             loss.backward()
 
@@ -201,7 +190,6 @@ def train_model_with_mask(
                         param.grad.mul_(global_mask[name])
 
             optimizer.step()
-
             running_loss += loss.item() * targets.size(0)
             _, predicted = preds.max(1)
             total += targets.size(0)
@@ -214,21 +202,13 @@ def train_model_with_mask(
         train_accuracy = 100.0 * correct / total
 
         if wandb_log:
-            wandb.log({
-                "Epoch": epoch,
-                "Train Loss": train_loss,
-                "Train Accuracy": train_accuracy,
-            })
+            wandb.log({"Epoch": epoch, "Train Loss": train_loss, "Train Accuracy": train_accuracy})
 
         if val_loader:
             _, _, val_loss, val_accuracy = compute_predictions(model, val_loader, device, loss_func)
 
             if wandb_log:
-                wandb.log({
-                    "Epoch": epoch,
-                    "Validation Loss": val_loss,
-                    "Validation Accuracy": val_accuracy,
-                })
+                wandb.log({"Epoch": epoch, "Validation Loss": val_loss, "Validation Accuracy": val_accuracy})
 
             if val_accuracy > best_acc:
                 best_acc = val_accuracy
