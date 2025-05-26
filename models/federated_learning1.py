@@ -553,7 +553,7 @@ class FederatedLearning:
             inputs, targets = inputs.to(self.device), targets.to(self.device)
             model.zero_grad()
             outputs = model(inputs)
-            loss = self.config.loss_fn(outputs, targets)
+            loss = self.config.loss_function(outputs, targets)
             loss.backward()
 
             for name, param in model.named_parameters():
@@ -572,7 +572,6 @@ class FederatedLearning:
     def train_model_with_mask(self,
     model,
     *,
-    training_params,
     train_loader: DataLoader,
     val_loader: Optional[DataLoader] = None,
     client_id: Optional[int] = None,
@@ -587,24 +586,24 @@ class FederatedLearning:
 
         use_wandb = wandb_log or wandb_save
         if use_wandb:
-            if training_params.project_name is None:
+            if self.config.project_name is None:
                 raise ValueError("project_name cannot be None if using wandb.")
             wandb.init(
-                project=training_params.project_name,
-                name=f"{training_params.training_name}_client{client_id}_round{round_id}",
+                project=self.config.project_name,
+                name=f"{self.config.training_name}_client{client_id}_round{round_id}",
                 config={
-                    "epochs": training_params.epochs,
+                    "epochs": self.config.epochs,
                     "batch_size": train_loader.batch_size,
-                    "learning_rate": training_params.learning_rate,
-                    "architecture": training_params.model.__class__.__name__,
+                    "learning_rate": self.config.learning_rate,
+                    "architecture": self.config.model.__class__.__name__,
                 },
             )
 
         model = model.to(self.device)
-        loss_func = training_params.loss_function
-        optimizer = training_params.optimizer
-        scheduler = training_params.scheduler
-        num_epochs = training_params.epochs
+        loss_func = self.config.loss_function
+        optimizer = self.config.optimizer_class
+        scheduler = self.config.scheduler_class
+        num_epochs = self.config.epochs
         best_acc = 0
 
         # Log mask stats
