@@ -505,7 +505,7 @@ class FederatedLearning:
             })
 
 
-    def generate_global_mask1(fisher_info, top_k: float = 0.2, strategy: str = "fisher_least"):
+    def generate_global_mask1(self, fisher_info, top_k: float = 0.2, strategy: str = "fisher_least"):
         if strategy.startswith("fisher"):
             all_scores = torch.cat([f.view(-1) for f in fisher_info.values()])
             if strategy == "fisher_least":
@@ -539,7 +539,7 @@ class FederatedLearning:
 
         return mask
 
-    def compute_fisher_information(model, dataloader, device, loss_fn, num_samples=100):
+    def compute_fisher_information(self, model, dataloader, device, loss_fn, num_samples=100):
         model.eval()
         fisher = {}
         for name, param in model.named_parameters():
@@ -685,7 +685,7 @@ class FederatedLearning:
         return {"model": model, "best_accuracy": best_acc}
 
 
-    def compute_predictions(model: nn.Module, dataloader: DataLoader, device: torch.device, loss_function: Optional[nn.Module] = None):
+    def compute_predictions(self, model: nn.Module, dataloader: DataLoader, device: torch.device, loss_function: Optional[nn.Module] = None):
         model.eval()
         predictions, labels = [], []
         total_loss, total_samples = 0.0, 0
