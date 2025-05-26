@@ -40,6 +40,39 @@ def compute_fisher_information(model, dataloader, device, loss_fn, num_samples=1
 
     return fisher
 
+def generate_global_mask1(fisher_info, top_k: float = 0.2, strategy: str = "fisher_least"):
+    if strategy.startswith("fisher"):
+        all_scores = torch.cat([f.view(-1) for f in fisher_info.values()])
+        if strategy == "fisher_least":
+            threshold = torch.quantile(all_scores, top_k)
+            compare = lambda x: x <= threshold
+        elif strategy == "fisher_most":
+            threshold = torch.quantile(all_scores, 1 - top_k)
+            compare = lambda x: x >= threshold
+        else:
+            raise ValueError(f"Unknown Fisher strategy: {strategy}")
+        mask = {name: compare(tensor).float() for name, tensor in fisher_info.items()}
+
+    elif strategy in {"magnitude_lowest", "magnitude_highest"}:
+        all_params = torch.cat([p.view(-1).abs() for p in fisher_info.values()])
+        if strategy == "magnitude_lowest":
+            threshold = torch.quantile(all_params, top_k)
+            compare = lambda x: x.abs() <= threshold
+        else:
+            threshold = torch.quantile(all_params, 1 - top_k)
+            compare = lambda x: x.abs() >= threshold
+        mask = {name: compare(p).float() for name, p in fisher_info.items()}
+
+    elif strategy == "random":
+        mask = {
+            name: (torch.rand_like(p) < top_k).float()
+            for name, p in fisher_info.items()
+        }
+
+    else:
+        raise ValueError(f"Unknown strategy: {strategy}")
+
+    return mask
 
 def generate_global_mask(fisher_info, top_k: float = 0.2):
     all_scores = torch.cat([f.view(-1) for f in fisher_info.values()])
@@ -118,7 +151,7 @@ def train_model_with_mask(
 
     # ---- Step 1: Compute Fisher Info and Mask ----
     fisher_info = compute_fisher_information(model, train_loader, device, loss_func, num_samples=fisher_samples)
-    global_mask = generate_global_mask(fisher_info, top_k=top_k_mask)
+    global_mask = generate_global_mask1(fisher_info, top_k=top_k_mask, strategy="magnitude_lowest")
 
     # ---- Step 2: Train Model with Mask ----
     for epoch in range(1, num_epochs + 1):
