@@ -29,33 +29,47 @@ def copy_model(original_model):
     copied_model.to(next(original_model.parameters()).device)
     return copied_model
 
-def extract_param_feature_map(model, dataloader, device, target_layer, num_samples=6):
-    model.eval()
+
+def extract_param_feature_map(model, dataloader, device, target_layer):
+    """
+    Extract Grad-CAM feature maps for a given model and dataloader.
+
+    Args:
+        model (nn.Module): The model (e.g., ViT).
+        dataloader (DataLoader): DataLoader with training or validation data.
+        device (torch.device): The device to use.
+        target_layer (str): Name of the target layer for Grad-CAM.
+
+    Returns:
+        dict: A dictionary of Grad-CAM maps.
+    """
     model.to(device)
-    cam_extractor = GradCAM(model, target_layer=target_layer)
-    feature_map = {}
-    samples = 0
+    model.eval()  # important to avoid training-time randomness like dropout
 
-    for images, labels in dataloader:
-        images, labels = images.to(device), labels.to(device)
-        outputs = model(images)
-        preds = outputs.argmax(dim=1)
+    # Ensure gradients are enabled for hooks
+    for param in model.parameters():
+        param.requires_grad = True
 
-        for i in range(images.size(0)):
-            if samples >= num_samples:
-                break
-            heatmap = cam_extractor(preds[i].item(), outputs[i].unsqueeze(0), retain_graph=True)[0]
-            for name, param in model.named_parameters():
-                if param.requires_grad and param.ndim >= 2:
-                    feature_map.setdefault(name, []).append(heatmap.mean().item())
-            samples += 1
+    extractor = GradCAM(model, target_layer=target_layer)
 
-        if samples >= num_samples:
+    cam_maps = {}  # store results
+
+    with torch.enable_grad():  # ensure gradients are tracked
+        for i, (images, labels) in enumerate(dataloader):
+            images = images.to(device)
+            images.requires_grad = True  # enable gradient tracking
+
+            outputs = model(images)
+
+            # Trigger CAM computation
+            cams = extractor(class_idx=None, scores=outputs)
+
+            cam_maps[f'batch_{i}'] = cams
+
+            # Optional: break early to avoid computing on whole dataset
             break
 
-    final_feature_signature = {k: sum(v) / len(v) for k, v in feature_map.items()}
-    model.train()
-    return final_feature_signature
+    return cam_maps
 
 def compute_fisher_information(model, dataloader, device, loss_fn, num_samples=100):
     model.eval()
