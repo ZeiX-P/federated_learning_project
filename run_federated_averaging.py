@@ -29,7 +29,7 @@ if __name__ == "__main__":
 
     config1 = Configuration(
                           model = dino,
-                          training_name="fl_centralized_baseline",
+                          training_name="federated_learning_model_editing_talos",
                           batch_size=64,
                           learning_rate=1e-3,
                           momentum=0.9,
@@ -42,12 +42,12 @@ if __name__ == "__main__":
                           optimizer_params={"momentum": 0.9, "weight_decay": 5e-4},
                           scheduler_params={"T_max": 20})
 
-    federated_learning = FederatedLearning(global_model=dino,data=data, num_clients=10, 
-                                           aggregation_method="FedAvg", num_rounds=2,
-                                            epochs_per_round=3, distribution_type="iid",
+    federated_learning = FederatedLearning(global_model=dino,data=data, num_clients=6, 
+                                           aggregation_method="FedAvg", num_rounds=3,
+                                            epochs_per_round=5, distribution_type="iid",
                                             client_fraction=0.5,config=config1)
     
     print("Starting Federated Learning process...")
-    federated_learning.run_model_editing_global()
+    federated_learning.run_model_editing_talos()
 
     print("Federated Learning process completed.")
