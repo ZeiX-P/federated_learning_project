@@ -589,7 +589,7 @@ class FederatedLearning:
         optimizer = self.config.optimizer_class(model.parameters(), lr=self.config.learning_rate)
 
         if self.config.scheduler_class is not None:
-            scheduler = self.config.scheduler_class(optimizer)
+            scheduler = self.config.scheduler_class(optimizer,T_max=self.config.epochs)
         else:
             scheduler = None
 
