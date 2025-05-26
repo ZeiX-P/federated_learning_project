@@ -490,7 +490,6 @@ class FederatedLearning:
                     val_loader=val_loader,
                     client_id=client,
                     round_id=round,
-                    training_params=self.config,  # assuming config includes training_name, project_name, etc.
                     fisher_mask=dict_client_masks[client]
                 )
 
