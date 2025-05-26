@@ -539,7 +539,7 @@ class FederatedLearning:
 
         return mask
 
-    def compute_fisher_information(self, model, dataloader, device, loss_fn, num_samples=100):
+    def compute_fisher_information(self, model, dataloader, device, num_samples=100):
         model.eval()
         fisher = {}
         for name, param in model.named_parameters():
@@ -553,7 +553,7 @@ class FederatedLearning:
             inputs, targets = inputs.to(device), targets.to(device)
             model.zero_grad()
             outputs = model(inputs)
-            loss = loss_fn(outputs, targets)
+            loss = self.config.loss_fn(outputs, targets)
             loss.backward()
 
             for name, param in model.named_parameters():
