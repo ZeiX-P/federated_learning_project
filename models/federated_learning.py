@@ -519,7 +519,7 @@ class FederatedLearning:
         # Initialise wandb with more detailed configuration
         run_name = f"{self.aggregation_method}_{self.distribution_type}_{self.num_clients}clients"
         wandb.init(
-            project="federated_learning_project", 
+            project=self.config.training_name, 
             name=run_name,
             config={
                 "aggregation_method": self.aggregation_method,
@@ -1235,12 +1235,6 @@ class FederatedLearning:
                     # Option B: freeze param
                     # aggregated[name] = torch.zeros_like(stacked[0])
         return aggregated
-
-
-
-            
-
-
 
     
     def __del__(self):
