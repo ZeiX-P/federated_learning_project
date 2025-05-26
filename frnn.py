@@ -50,7 +50,8 @@ def get_target_layer_for_model(model):
 
 def extract_param_feature_map(model, dataloader, device, target_layer, num_samples=50):
     """
-    Fixed version: Properly extracts GradCAM-based parameter importance signatures
+    FIXED version: Properly extracts GradCAM-based parameter importance signatures
+    Key fix: Process each sample with a fresh forward pass to avoid graph reuse
     """
     model.to(device)
     model.eval()
@@ -80,18 +81,17 @@ def extract_param_feature_map(model, dataloader, device, target_layer, num_sampl
                 labels = labels.to(device)
                 batch_size = images.size(0)
                 
-                # Forward pass
-                outputs = model(images)
-                preds = outputs.argmax(dim=1)
-                
-                # Process each image in the batch
+                # FIXED: Process each image individually with fresh forward pass
                 for i in range(min(batch_size, num_samples - sample_count)):
                     try:
-                        # Generate CAM for this specific prediction
-                        single_output = outputs[i:i+1]
-                        pred_class = preds[i].item()
+                        # Create fresh input tensor for this sample (KEY FIX)
+                        single_image = images[i:i+1].clone().detach().requires_grad_(True)
                         
-                        # Get activation map
+                        # Fresh forward pass for this sample only
+                        single_output = model(single_image)
+                        pred_class = single_output.argmax(dim=1).item()
+                        
+                        # Get activation map using the fresh output
                         activation_maps = extractor(pred_class, single_output)
                         
                         if activation_maps and len(activation_maps) > 0:
@@ -106,12 +106,15 @@ def extract_param_feature_map(model, dataloader, device, target_layer, num_sampl
                         
                         sample_count += 1
                         
+                        # Clear gradients to avoid accumulation
+                        model.zero_grad()
+                        
                     except Exception as e:
                         logging.warning(f"GradCAM failed for sample {i} in batch {batch_idx}: {e}")
                         continue
                 
-                # Only process one batch for efficiency
-                if sample_count > 0:
+                # Break after processing enough samples for efficiency
+                if sample_count >= num_samples:
                     break
                     
     except Exception as e:
