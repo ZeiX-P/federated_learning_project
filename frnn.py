@@ -31,43 +31,35 @@ def copy_model(original_model):
 
 
 def extract_param_feature_map(model, dataloader, device, target_layer):
-    """
-    Extract Grad-CAM feature maps for a given model and dataloader.
-
-    Args:
-        model (nn.Module): The model (e.g., ViT).
-        dataloader (DataLoader): DataLoader with training or validation data.
-        device (torch.device): The device to use.
-        target_layer (str): Name of the target layer for Grad-CAM.
-
-    Returns:
-        dict: A dictionary of Grad-CAM maps.
-    """
     model.to(device)
-    model.eval()  # important to avoid training-time randomness like dropout
+    model.eval()
 
-    # Ensure gradients are enabled for hooks
+    # Ensure model parameters require gradients
     for param in model.parameters():
         param.requires_grad = True
 
+    # Initialize CAM extractor
     extractor = GradCAM(model, target_layer=target_layer)
 
-    cam_maps = {}  # store results
+    cam_maps = {}
 
-    with torch.enable_grad():  # ensure gradients are tracked
-        for i, (images, labels) in enumerate(dataloader):
+    # Only compute CAM for the first batch
+    with torch.enable_grad():
+        for batch_idx, (images, labels) in enumerate(dataloader):
             images = images.to(device)
-            images.requires_grad = True  # enable gradient tracking
+            images.requires_grad = True
 
+            # Forward pass
             outputs = model(images)
+            preds = outputs.argmax(dim=1)
 
-            # Trigger CAM computation
-            cams = extractor(class_idx=None, scores=outputs)
+            # Compute CAMs
+            cams = extractor(class_idx=preds, scores=outputs)
 
-            cam_maps[f'batch_{i}'] = cams
+            # Store CAMs
+            cam_maps[f'batch_{batch_idx}'] = cams
 
-            # Optional: break early to avoid computing on whole dataset
-            break
+            break  # Only use one batch
 
     return cam_maps
 
