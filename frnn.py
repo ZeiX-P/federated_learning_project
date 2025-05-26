@@ -54,7 +54,7 @@ def extract_param_feature_map(model, dataloader, device, target_layer):
             preds = outputs.argmax(dim=1)
 
             # Compute CAMs
-            cams = extractor(class_idx=preds, scores=outputs)
+            cams = extractor(class_idx=preds.tolist(), scores=outputs)
 
             # Store CAMs
             cam_maps[f'batch_{batch_idx}'] = cams
