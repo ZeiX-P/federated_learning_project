@@ -550,7 +550,7 @@ class FederatedLearning:
         for inputs, targets in dataloader:
             if count >= num_samples:
                 break
-            inputs, targets = inputs.to(device), targets.to(device)
+            inputs, targets = inputs.to(self.device), targets.to(self.device)
             model.zero_grad()
             outputs = model(inputs)
             loss = self.config.loss_fn(outputs, targets)
