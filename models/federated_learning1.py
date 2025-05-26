@@ -642,7 +642,7 @@ class FederatedLearning:
                             if name in fisher_mask and param.grad is not None:
                                 param.grad.mul_(fisher_mask[name])
 
-                optimizer.step()
+                optimizer.step
                 running_loss += loss.item() * targets.size(0)
                 _, predicted = preds.max(1)
                 total += targets.size(0)
