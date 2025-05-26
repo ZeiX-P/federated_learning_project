@@ -11,7 +11,6 @@ from config import Configuration
 def get_device():
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-
 def compute_fisher_information(model, dataloader, device, loss_fn, num_samples=100):
     model.eval()
     fisher = {}
@@ -84,7 +83,6 @@ def generate_global_mask(fisher_info, top_k: float = 0.2):
 
     return mask
 
-
 def compute_predictions(model: nn.Module, dataloader: DataLoader, device: torch.device, loss_function: Optional[nn.Module] = None):
     model.eval()
     predictions, labels = [], []
@@ -109,7 +107,6 @@ def compute_predictions(model: nn.Module, dataloader: DataLoader, device: torch.
     avg_loss = total_loss / total_samples if total_samples > 0 else 0.0
 
     return predictions, labels, avg_loss, accuracy
-
 
 def train_model_with_mask(
     *,
@@ -152,6 +149,23 @@ def train_model_with_mask(
     # ---- Step 1: Compute Fisher Info and Mask ----
     fisher_info = compute_fisher_information(model, train_loader, device, loss_func, num_samples=fisher_samples)
     global_mask = generate_global_mask1(fisher_info, top_k=top_k_mask, strategy="random")
+
+    # ---- Log how many parameters were masked ----
+    total_params = 0
+    zeroed_params = 0
+    for name, mask in global_mask.items():
+        total_params += mask.numel()
+        zeroed_params += (mask == 0).sum().item()
+
+    if wandb_log:
+        wandb.log({
+            "Masking/Total Parameters": total_params,
+            "Masking/Zeroed Parameters": zeroed_params,
+            "Masking/Sparsity (%)": 100.0 * zeroed_params / total_params
+        })
+    else:
+        logging.info(f"Masking: {zeroed_params}/{total_params} parameters set to 0 "
+                     f"({100.0 * zeroed_params / total_params:.2f}%)")
 
     # ---- Step 2: Train Model with Mask ----
     for epoch in range(1, num_epochs + 1):
@@ -220,30 +234,30 @@ def train_model_with_mask(
 
     return {"model": model, "best_accuracy": best_acc}
 
+# --- Setup Model and Configuration ---
 
 data = Dataset()
 dino = timm.create_model('vit_small_patch16_224.dino', pretrained=True)
 
-
 for param in dino.parameters():
     param.requires_grad = False
 dino.head = nn.Linear(384, 100)
+
 config = Configuration(
-                        model = dino,
-                        training_name="fl_centralized_baseline",
-                        batch_size=64,
-                        learning_rate=1e-3,
-                        momentum=0.9,
-                        weight_decay=5e-4,
-                        dataset="CIFAR100",
-                        optimizer_class=torch.optim.SGD,
-                        loss_function=nn.CrossEntropyLoss(),
-                        scheduler_class=torch.optim.lr_scheduler.CosineAnnealingLR,
-                        epochs=25,
-                        optimizer_params={"momentum": 0.9, "weight_decay": 5e-4},
-                        scheduler_params={"T_max": 20})
-    
-    
+    model=dino,
+    training_name="fl_centralized_baseline",
+    batch_size=64,
+    learning_rate=1e-3,
+    momentum=0.9,
+    weight_decay=5e-4,
+    dataset="CIFAR100",
+    optimizer_class=torch.optim.SGD,
+    loss_function=nn.CrossEntropyLoss(),
+    scheduler_class=torch.optim.lr_scheduler.CosineAnnealingLR,
+    epochs=25,
+    optimizer_params={"momentum": 0.9, "weight_decay": 5e-4},
+    scheduler_params={"T_max": 20}
+)
 
 train_dataloader, val_dataloader = data.get_dataloaders(config.dataset)
 
