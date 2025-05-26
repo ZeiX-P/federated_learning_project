@@ -632,7 +632,7 @@ class FederatedLearning:
                 preds = model(inputs)
                 loss = loss_func(preds, targets)
 
-                optimizer.zero_grad()
+                optimizer.zero_grad
                 loss.backward()
 
                 # Apply Fisher mask to gradients
