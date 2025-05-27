@@ -458,7 +458,7 @@ class FederatedLearning:
                     self.local_models[client], train_loader, self.device, num_samples=100
                 )
 
-                local_mask = self.generate_global_mask1(fisher_info, top_k=0.80, strategy="fisher_least")
+                local_mask = self.generate_global_mask_talos(fisher_info, top_k=0.80)
                 dict_client_masks[client] = local_mask
 
                 wandb.log({
@@ -643,27 +643,22 @@ class FederatedLearning:
         avg_loss = total_loss / total_samples if total_samples > 0 else 0.0
 
         return predictions, labels, avg_loss, accuracy
+    
+    def generate_global_mask_talos(self, fisher_info: dict, top_k: float = 0.5):
+        """
+        TaLoS-style mask: update only the bottom-k Fisher parameters (least important).
+        Parameters with Fisher >= threshold are frozen (mask=0), others are trainable (mask=1).
+        """
+        all_fisher = torch.cat([v.view(-1) for v in fisher_info.values()])
+        num_params = all_fisher.numel()
+        k_threshold_index = int(num_params * top_k)
 
-        """Clean up when the class is deleted."""
-        try:
-            # Final evaluation
-            final_metrics = self.evaluate_global_model()
-            
-            # Log final metrics
-            wandb.log({
-                "final/val_loss": final_metrics["val_loss"],
-                "final/val_accuracy": final_metrics["val_accuracy"],
-            })
-            
-            # Save the global model
-            torch.save(self.global_model.state_dict(), "final_global_model.pth")
-            wandb.save("final_global_model.pth")
-            
-            # Finish the wandb run
-            wandb.finish()
-        except:
-            # In case of errors during cleanup
-            try:
-                wandb.finish()
-            except:
-                pass
+        sorted_fisher, _ = torch.sort(all_fisher)
+        threshold = sorted_fisher[k_threshold_index]
+
+        mask = {}
+        for name, tensor in fisher_info.items():
+            mask[name] = (tensor < threshold).float()
+        return mask
+
+        
