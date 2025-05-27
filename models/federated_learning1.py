@@ -458,7 +458,7 @@ class FederatedLearning:
                     self.local_models[client], train_loader, self.device, num_samples=100
                 )
 
-                local_mask = self.generate_global_mask1(fisher_info, top_k=0.5, strategy="fisher_least")
+                local_mask = self.generate_global_mask1(fisher_info, top_k=0.1, strategy="fisher_least")
                 dict_client_masks[client] = local_mask
 
                 wandb.log({
