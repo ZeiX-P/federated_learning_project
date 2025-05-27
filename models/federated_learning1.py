@@ -458,7 +458,7 @@ class FederatedLearning:
                     self.local_models[client], train_loader, self.device, num_samples=100
                 )
 
-                local_mask = self.generate_global_mask1(fisher_info, top_k=0.1, strategy="fisher_least")
+                local_mask = self.generate_global_mask1(fisher_info, top_k=0.80, strategy="fisher_least")
                 dict_client_masks[client] = local_mask
 
                 wandb.log({
@@ -498,7 +498,7 @@ class FederatedLearning:
                 "global/val_accuracy": global_metrics.get("val_accuracy", 0)
             })
 
-    def generate_global_mask1(self, fisher_info, top_k: float = 0.2, strategy: str = "fisher_least"):
+    def generate_global_mask1(self, fisher_info, top_k: float = 0.8, strategy: str = "fisher_least"):
         mask = {}
         for name, tensor in fisher_info.items():
             flat_tensor = tensor.view(-1)
