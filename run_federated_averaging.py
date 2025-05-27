@@ -44,8 +44,8 @@ if __name__ == "__main__":
                           project_name="federated_learning_model_editing_talos")
 
     federated_learning = FederatedLearning(global_model=dino,data=data, num_clients=6, 
-                                           aggregation_method="FedAvg", num_rounds=3,
-                                            epochs_per_round=5, distribution_type="iid",
+                                           aggregation_method="FedAvg", num_rounds=5,
+                                            epochs_per_round=10, distribution_type="iid",
                                             client_fraction=0.5,config=config1)
     
     print("Starting Federated Learning process...")
