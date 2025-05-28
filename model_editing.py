@@ -463,12 +463,13 @@ def train_model_with_mask(
     project_name: Optional[str] = None,
     wandb_log: bool = True,
     wandb_save: bool = True,
-    fisher_samples: int = 100,
+    fisher_samples: int = 1000,
     top_k_mask: float = 0.1, # keep top 20% least important parameters
 ) -> dict:
     assert train_loader is not None
     if val_loader is not None:
         assert isinstance(val_loader, DataLoader)
+
 
     use_wandb = wandb_log or wandb_save
     if use_wandb:
