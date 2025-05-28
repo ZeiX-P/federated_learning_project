@@ -279,10 +279,14 @@ from torch.utils.data import DataLoader
 from typing import Optional
 import wandb
 import logging
-import timm
-import numpy as np # Import numpy for histogram binning if needed
+import numpy as np
+
+# Assuming dataset.data and config are properly set up
 from dataset.data import Dataset
 from config import Configuration
+
+# Ensure timm is installed if not already: pip install timm
+import timm
 
 def get_device():
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -306,11 +310,13 @@ def compute_fisher_information(model, dataloader, device, loss_fn, num_samples=1
 
         for name, param in model.named_parameters():
             if param.grad is not None:
+                # Accumulate squared gradients
                 fisher[name] += param.grad.data ** 2
 
         count += 1
 
     for name in fisher:
+        # Average the squared gradients
         fisher[name] /= count
 
     return fisher
@@ -318,24 +324,25 @@ def compute_fisher_information(model, dataloader, device, loss_fn, num_samples=1
 def generate_global_mask1(fisher_info, top_k: float = 0.2, strategy: str = "fisher_least", quantile_sample_size: int = 1_000_000):
     """
     Generates a global mask based on Fisher information or magnitude.
-    top_k: percentage of parameters to keep (for 'fisher_least', this is the percentage of least important).
+    top_k: percentage of parameters to keep trainable (for 'fisher_least', this is the percentage of least important).
     strategy: "fisher_least", "fisher_most", "magnitude_lowest", "magnitude_highest", "random"
     quantile_sample_size: Max number of elements to sample for quantile calculation to avoid RuntimeErrors.
+    Returns:
+        mask (dict): Dictionary of binary masks (1.0 for trainable, 0.0 for frozen).
+        all_scores (torch.Tensor or None): Concatenated (and possibly sampled) importance scores for logging.
     """
-    if strategy.startswith("fisher"):
-        # Gather all scores into a single tensor, but sample if too large
-        all_scores_list = [f.view(-1) for f in fisher_info.values()]
+    all_scores = None # Initialize to None
 
-        # Check total number of elements
+    if strategy.startswith("fisher"):
+        all_scores_list = [f.view(-1) for f in fisher_info.values()]
         total_elements = sum(f.numel() for f in fisher_info.values())
 
         if total_elements > quantile_sample_size:
-            # Sample elements if the total is too large
             sampled_scores_list = []
             for f in all_scores_list:
                 num_to_sample_per_tensor = int(f.numel() / total_elements * quantile_sample_size)
                 if num_to_sample_per_tensor > 0:
-                    idx = torch.randperm(f.numel(), device=f.device)[:num_to_sample_per_tensor] # ensure idx is on same device
+                    idx = torch.randperm(f.numel(), device=f.device)[:num_to_sample_per_tensor]
                     sampled_scores_list.append(f[idx])
             all_scores = torch.cat(sampled_scores_list)
             logging.info(f"Quantile: Sampled {all_scores.numel()} elements for quantile calculation from {total_elements} total.")
@@ -343,13 +350,13 @@ def generate_global_mask1(fisher_info, top_k: float = 0.2, strategy: str = "fish
             all_scores = torch.cat(all_scores_list)
 
         if strategy == "fisher_least":
-            # If we want to KEEP the top_k (e.g., 20%) LEAST important,
-            # then the threshold means anything BELOW or EQUAL to it is kept (mask=1),
-            # and anything ABOVE it is frozen (mask=0).
+            # Keep the top_k LEAST important parameters trainable (mask=1).
+            # Freeze parameters with scores > threshold (mask=0).
             threshold = torch.quantile(all_scores, top_k)
-            # 'compare' now returns True for parameters to be KEPT (mask=1)
             compare = lambda x: x <= threshold
         elif strategy == "fisher_most":
+            # Keep the top_k MOST important parameters trainable (mask=1).
+            # Freeze parameters with scores < threshold (mask=0).
             threshold = torch.quantile(all_scores, 1 - top_k)
             compare = lambda x: x >= threshold
         else:
@@ -357,7 +364,6 @@ def generate_global_mask1(fisher_info, top_k: float = 0.2, strategy: str = "fish
         mask = {name: compare(tensor).float() for name, tensor in fisher_info.items()}
 
     elif strategy in {"magnitude_lowest", "magnitude_highest"}:
-        # Similar sampling logic for magnitude if needed
         all_params_list = [p.view(-1).abs() for p in fisher_info.values()]
         total_elements = sum(p.numel() for p in fisher_info.values())
 
@@ -366,18 +372,18 @@ def generate_global_mask1(fisher_info, top_k: float = 0.2, strategy: str = "fish
             for p in all_params_list:
                 num_to_sample_per_tensor = int(p.numel() / total_elements * quantile_sample_size)
                 if num_to_sample_per_tensor > 0:
-                    idx = torch.randperm(p.numel(), device=p.device)[:num_to_sample_per_tensor] # ensure idx is on same device
+                    idx = torch.randperm(p.numel(), device=p.device)[:num_to_sample_per_tensor]
                     sampled_params_list.append(p[idx])
-            all_params = torch.cat(sampled_params_list)
-            logging.info(f"Quantile: Sampled {all_params.numel()} elements for magnitude quantile calculation from {total_elements} total.")
+            all_scores = torch.cat(sampled_params_list) # Use all_scores for magnitude as well for consistency
+            logging.info(f"Quantile: Sampled {all_scores.numel()} elements for magnitude quantile calculation from {total_elements} total.")
         else:
-            all_params = torch.cat(all_params_list)
+            all_scores = torch.cat(all_params_list)
 
         if strategy == "magnitude_lowest":
-            threshold = torch.quantile(all_params, top_k)
+            threshold = torch.quantile(all_scores, top_k)
             compare = lambda x: x.abs() <= threshold
         else:
-            threshold = torch.quantile(all_params, 1 - top_k)
+            threshold = torch.quantile(all_scores, 1 - top_k)
             compare = lambda x: x.abs() >= threshold
         mask = {name: compare(p).float() for name, p in fisher_info.items()}
 
@@ -386,23 +392,13 @@ def generate_global_mask1(fisher_info, top_k: float = 0.2, strategy: str = "fish
             name: (torch.rand_like(p) < top_k).float() # top_k percentage of parameters are kept (mask=1)
             for name, p in fisher_info.items()
         }
+        all_scores = None # No meaningful scores for random strategy
 
     else:
         raise ValueError(f"Unknown strategy: {strategy}")
 
-    # Return all_scores for logging, even if it's a sampled version
-    return mask, all_scores if 'all_scores' in locals() else None
+    return mask, all_scores
 
-
-def generate_global_mask(fisher_info, top_k: float = 0.2):
-    # This function is not used in the main training flow, but kept for completeness
-    all_scores = torch.cat([f.view(-1) for f in fisher_info.values()])
-    threshold = torch.quantile(all_scores, 1 - top_k)
-
-    mask = {}
-    for name, tensor in fisher_info.items():
-        mask[name] = (tensor >= threshold).float() # Keep these (mask = 1)
-    return mask
 
 def compute_predictions(model: nn.Module, dataloader: DataLoader, device: torch.device, loss_function: Optional[nn.Module] = None):
     model.eval()
@@ -429,6 +425,7 @@ def compute_predictions(model: nn.Module, dataloader: DataLoader, device: torch.
 
     return predictions, labels, avg_loss, accuracy
 
+
 def train_model_with_mask(
     *,
     training_params,
@@ -438,8 +435,8 @@ def train_model_with_mask(
     wandb_log: bool = True,
     wandb_save: bool = True,
     fisher_samples: int = 100,
-    top_k_mask: float = 0.2, # keep top 20% least important parameters
-    quantile_sample_size: int = 1_000_000, # Added this parameter
+    top_k_mask: float = 0.2, # percentage of parameters to keep trainable (based on strategy)
+    quantile_sample_size: int = 1_000_000,
 ) -> dict:
     assert train_loader is not None
     if val_loader is not None:
@@ -465,34 +462,28 @@ def train_model_with_mask(
     loss_func = training_params.loss_function
     original_optimizer_class = training_params.optimizer_class
     original_optimizer_params = training_params.optimizer_params
-    optimizer = None # Placeholder, will be initialized later
+    optimizer = None
     scheduler = training_params.scheduler
     num_epochs = training_params.epochs
     best_acc = 0
 
     # --- Step 1: Compute Fisher Info and Generate Mask ---
+    # The 'strategy' argument is now passed directly to generate_global_mask1
     fisher_info = compute_fisher_information(model, train_loader, device, loss_func, num_samples=fisher_samples)
     global_mask_for_trainable, all_fisher_scores_sampled = generate_global_mask1(
         fisher_info,
         top_k=top_k_mask,
-        strategy="fisher_least", # Or "fisher_most" depending on your goal
+        strategy="fisher_least", # Specify the strategy here directly
         quantile_sample_size=quantile_sample_size
     )
 
     # --- LOG FISHER VALUES TO WANDB ---
     if wandb_log and all_fisher_scores_sampled is not None:
-        logging.info("Logging Fisher information histogram to WandB.")
-        # Ensure scores are on CPU and convert to numpy for wandb.Histogram
+        logging.info("Logging Fisher information histogram and statistics to WandB.")
         fisher_scores_np = all_fisher_scores_sampled.cpu().numpy()
 
-        # You might want to filter out extreme outliers for better visualization
-        # For example, filter out values above a certain percentile or focus on non-zero values
-        # If there's a huge spike at 0, you might want to visualize with a log scale
-        
-        # Option 1: Basic histogram
         wandb.log({"Fisher/Fisher_Values_Histogram": wandb.Histogram(fisher_scores_np)}, step=0)
 
-        # Option 2: Log statistics (min, max, median, etc.)
         wandb.log({
             "Fisher/Min_Fisher_Value": np.min(fisher_scores_np),
             "Fisher/Max_Fisher_Value": np.max(fisher_scores_np),
@@ -503,7 +494,6 @@ def train_model_with_mask(
             "Fisher/Zero_Values_Percentage": (fisher_scores_np == 0).sum() / len(fisher_scores_np) * 100
         }, step=0)
 
-        # Option 3: Log quantiles for specific points (useful for verifying thresholds)
         quantiles_to_log = [0.01, 0.05, 0.1, 0.2, 0.5, 0.8, 0.9, 0.95, 0.99]
         for q_val in quantiles_to_log:
             try:
@@ -521,17 +511,12 @@ def train_model_with_mask(
         if name in global_mask_for_trainable:
             mask_for_param = global_mask_for_trainable[name]
 
-            # If ALL elements in the mask for this parameter are 0.0 (meaning it's among the 80% most important)
-            if (mask_for_param == 0).all():
+            if (mask_for_param == 0).all(): # If all elements in mask are 0, freeze the entire parameter
                 param.requires_grad_(False)
                 frozen_params_count += param.numel()
-            else:
-                # If any part of the mask is 1.0, it means this parameter IS among the 20% least important
-                # and should remain trainable.
+            else: # Otherwise, keep it trainable
                 param.requires_grad_(True)
-        else:
-            # If a parameter is NOT in global_mask_for_trainable (e.g., a new head)
-            # ensure it remains trainable.
+        else: # For parameters not in the mask (e.g., new head layers), keep them trainable
             param.requires_grad_(True)
 
 
@@ -622,14 +607,18 @@ def train_model_with_mask(
 
     return {"model": model, "best_accuracy": best_acc}
 
+
 # --- Setup Model and Configuration ---
 
 data = Dataset()
 dino = timm.create_model('vit_small_patch16_224.dino', pretrained=True)
 
+# Ensure all parameters are trainable initially, including the backbone.
+# This makes sure our Fisher-based freezing mechanism is the one deciding.
 for param in dino.parameters():
     param.requires_grad = True
 
+# Replace the head - parameters of the new head are automatically requires_grad=True
 dino.head = nn.Linear(384, 100)
 
 config = Configuration(
@@ -643,7 +632,7 @@ config = Configuration(
     optimizer_class=torch.optim.SGD,
     loss_function=nn.CrossEntropyLoss(),
     scheduler_class=torch.optim.lr_scheduler.CosineAnnealingLR,
-    epochs=10,
+    epochs=6,
     optimizer_params={"momentum": 0.9, "weight_decay": 5e-4},
     scheduler_params={"T_max": 20},
     project_name="fl_centralized_model_editing",
@@ -657,7 +646,6 @@ res_dict = train_model_with_mask(
     val_loader=val_dataloader,
     project_name="fl_centralized_fisher_editing",
     top_k_mask=0.1,
-    strategy="fisher_least", # Keep the 20% least important parameters trainable.
-                             # Consequently, 80% (the most important) will be frozen.
+    # The 'strategy' argument is removed from here. It's handled inside generate_global_mask1 now.
     quantile_sample_size=100000
 )
