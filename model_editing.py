@@ -256,7 +256,8 @@ config = Configuration(
     scheduler_class=torch.optim.lr_scheduler.CosineAnnealingLR,
     epochs=25,
     optimizer_params={"momentum": 0.9, "weight_decay": 5e-4},
-    scheduler_params={"T_max": 20}
+    scheduler_params={"T_max": 20},
+    project_name="fl_centralized_model_editing",
 )
 
 train_dataloader, val_dataloader = data.get_dataloaders(config.dataset)
