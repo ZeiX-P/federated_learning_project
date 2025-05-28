@@ -280,13 +280,14 @@ from typing import Optional
 import wandb
 import logging
 import timm
+import numpy as np # Import numpy for histogram binning if needed
 from dataset.data import Dataset
 from config import Configuration
 
 def get_device():
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def compute_fisher_information(model, dataloader, device, loss_fn, num_samples=1000):
+def compute_fisher_information(model, dataloader, device, loss_fn, num_samples=100):
     model.eval()
     fisher = {}
     for name, param in model.named_parameters():
@@ -314,107 +315,84 @@ def compute_fisher_information(model, dataloader, device, loss_fn, num_samples=1
 
     return fisher
 
-def generate_global_mask1(fisher_info, top_k: float = 0.10, strategy: str = "fisher_least"):
+def generate_global_mask1(fisher_info, top_k: float = 0.2, strategy: str = "fisher_least", quantile_sample_size: int = 1_000_000):
+    """
+    Generates a global mask based on Fisher information or magnitude.
+    top_k: percentage of parameters to keep (for 'fisher_least', this is the percentage of least important).
+    strategy: "fisher_least", "fisher_most", "magnitude_lowest", "magnitude_highest", "random"
+    quantile_sample_size: Max number of elements to sample for quantile calculation to avoid RuntimeErrors.
+    """
     if strategy.startswith("fisher"):
-        # Collect all scores, flatten them
+        # Gather all scores into a single tensor, but sample if too large
         all_scores_list = [f.view(-1) for f in fisher_info.values()]
-        
-        # Concatenate them to get a single tensor of all scores
-        # This is where it gets too large for torch.quantile directly
-        # all_scores = torch.cat(all_scores_list) # This line causes the error
 
-        # --- MODIFICATION: Subsampling for Quantile Calculation ---
-        # Determine a reasonable sample size. 1M to 10M is usually sufficient for good approximation.
-        # Adjust based on your model size and memory constraints.
-        sample_size = 100000 # Example: 10 million samples. Adjust if still too large or too slow.
-
-        # Estimate total number of elements without concatenating the whole thing
+        # Check total number of elements
         total_elements = sum(f.numel() for f in fisher_info.values())
 
-        if total_elements > sample_size:
-            # If total elements exceed sample_size, take a random sample
-            # Create a list of sampled tensors
-            sampled_tensors = []
-            for score_tensor in all_scores_list:
-                num_elements = score_tensor.numel()
-                # Calculate what proportion of the sample this tensor should contribute
-                proportion = num_elements / total_elements
-                elements_to_sample_from_this_tensor = int(sample_size * proportion)
-                
-                if elements_to_sample_from_this_tensor > 0 and num_elements > 0:
-                    # Ensure we don't try to sample more than available elements
-                    actual_sample_size = min(elements_to_sample_from_this_tensor, num_elements)
-                    
-                    # Randomly permute and take the first `actual_sample_size` elements
-                    perm = torch.randperm(num_elements, device=score_tensor.device)
-                    sampled_tensors.append(score_tensor.view(-1)[perm[:actual_sample_size]])
-            
-            if len(sampled_tensors) == 0:
-                raise ValueError("Could not collect enough samples for quantile calculation. Check fisher_info and sample_size.")
-            
-            # Concatenate the sampled tensors
-            sampled_all_scores = torch.cat(sampled_tensors)
+        if total_elements > quantile_sample_size:
+            # Sample elements if the total is too large
+            sampled_scores_list = []
+            for f in all_scores_list:
+                num_to_sample_per_tensor = int(f.numel() / total_elements * quantile_sample_size)
+                if num_to_sample_per_tensor > 0:
+                    idx = torch.randperm(f.numel(), device=f.device)[:num_to_sample_per_tensor] # ensure idx is on same device
+                    sampled_scores_list.append(f[idx])
+            all_scores = torch.cat(sampled_scores_list)
+            logging.info(f"Quantile: Sampled {all_scores.numel()} elements for quantile calculation from {total_elements} total.")
         else:
-            # If the total number of elements is manageable, use all of them
-            sampled_all_scores = torch.cat(all_scores_list)
-        # --- END MODIFICATION ---
+            all_scores = torch.cat(all_scores_list)
 
         if strategy == "fisher_least":
-            # Now compute quantile on the (potentially sampled) `sampled_all_scores`
-            threshold = torch.quantile(sampled_all_scores, top_k)
+            # If we want to KEEP the top_k (e.g., 20%) LEAST important,
+            # then the threshold means anything BELOW or EQUAL to it is kept (mask=1),
+            # and anything ABOVE it is frozen (mask=0).
+            threshold = torch.quantile(all_scores, top_k)
+            # 'compare' now returns True for parameters to be KEPT (mask=1)
             compare = lambda x: x <= threshold
         elif strategy == "fisher_most":
-            threshold = torch.quantile(sampled_all_scores, 1 - top_k)
+            threshold = torch.quantile(all_scores, 1 - top_k)
             compare = lambda x: x >= threshold
         else:
             raise ValueError(f"Unknown Fisher strategy: {strategy}")
-        
         mask = {name: compare(tensor).float() for name, tensor in fisher_info.items()}
 
-    # ... (rest of your generate_global_mask1 function remains the same)
     elif strategy in {"magnitude_lowest", "magnitude_highest"}:
+        # Similar sampling logic for magnitude if needed
         all_params_list = [p.view(-1).abs() for p in fisher_info.values()]
-        
-        # Apply similar subsampling for magnitude strategies if needed
-        # sampled_all_params = ... (similar subsampling logic as above)
+        total_elements = sum(p.numel() for p in fisher_info.values())
 
-        total_elements_params = sum(p.numel() for p in fisher_info.values())
-        if total_elements_params > sample_size: # Use same sample_size for consistency
-            sampled_tensors_params = []
-            for param_tensor in all_params_list:
-                num_elements = param_tensor.numel()
-                proportion = num_elements / total_elements_params
-                elements_to_sample_from_this_tensor = int(sample_size * proportion)
-                if elements_to_sample_from_this_tensor > 0 and num_elements > 0:
-                     actual_sample_size = min(elements_to_sample_from_this_tensor, num_elements)
-                     perm = torch.randperm(num_elements, device=param_tensor.device)
-                     sampled_tensors_params.append(param_tensor.view(-1)[perm[:actual_sample_size]])
-            
-            if len(sampled_tensors_params) == 0:
-                 raise ValueError("Could not collect enough samples for quantile calculation. Check fisher_info and sample_size.")
-            
-            sampled_all_params = torch.cat(sampled_tensors_params)
+        if total_elements > quantile_sample_size:
+            sampled_params_list = []
+            for p in all_params_list:
+                num_to_sample_per_tensor = int(p.numel() / total_elements * quantile_sample_size)
+                if num_to_sample_per_tensor > 0:
+                    idx = torch.randperm(p.numel(), device=p.device)[:num_to_sample_per_tensor] # ensure idx is on same device
+                    sampled_params_list.append(p[idx])
+            all_params = torch.cat(sampled_params_list)
+            logging.info(f"Quantile: Sampled {all_params.numel()} elements for magnitude quantile calculation from {total_elements} total.")
         else:
-            sampled_all_params = torch.cat(all_params_list)
+            all_params = torch.cat(all_params_list)
 
         if strategy == "magnitude_lowest":
-            threshold = torch.quantile(sampled_all_params, top_k)
+            threshold = torch.quantile(all_params, top_k)
             compare = lambda x: x.abs() <= threshold
         else:
-            threshold = torch.quantile(sampled_all_params, 1 - top_k)
+            threshold = torch.quantile(all_params, 1 - top_k)
             compare = lambda x: x.abs() >= threshold
         mask = {name: compare(p).float() for name, p in fisher_info.items()}
 
     elif strategy == "random":
         mask = {
-            name: (torch.rand_like(p) < top_k).float()
+            name: (torch.rand_like(p) < top_k).float() # top_k percentage of parameters are kept (mask=1)
             for name, p in fisher_info.items()
         }
 
     else:
         raise ValueError(f"Unknown strategy: {strategy}")
 
-    return mask
+    # Return all_scores for logging, even if it's a sampled version
+    return mask, all_scores if 'all_scores' in locals() else None
+
 
 def generate_global_mask(fisher_info, top_k: float = 0.2):
     # This function is not used in the main training flow, but kept for completeness
@@ -451,10 +429,6 @@ def compute_predictions(model: nn.Module, dataloader: DataLoader, device: torch.
 
     return predictions, labels, avg_loss, accuracy
 
-
-## Modified `train_model_with_mask` Function
-
-
 def train_model_with_mask(
     *,
     training_params,
@@ -463,13 +437,13 @@ def train_model_with_mask(
     project_name: Optional[str] = None,
     wandb_log: bool = True,
     wandb_save: bool = True,
-    fisher_samples: int = 1000,
-    top_k_mask: float = 0.1, # keep top 20% least important parameters
+    fisher_samples: int = 100,
+    top_k_mask: float = 0.2, # keep top 20% least important parameters
+    quantile_sample_size: int = 1_000_000, # Added this parameter
 ) -> dict:
     assert train_loader is not None
     if val_loader is not None:
         assert isinstance(val_loader, DataLoader)
-
 
     use_wandb = wandb_log or wandb_save
     if use_wandb:
@@ -497,40 +471,71 @@ def train_model_with_mask(
     best_acc = 0
 
     # --- Step 1: Compute Fisher Info and Generate Mask ---
-    # `generate_global_mask1` with `fisher_least` and `top_k=0.2` will produce a mask where:
-    #   - `1.0` for the 20% least important parameters (these are the ones we want to KEEP TRAINABLE)
-    #   - `0.0` for the 80% most important parameters (these are the ones we want to FREEZE)
     fisher_info = compute_fisher_information(model, train_loader, device, loss_func, num_samples=fisher_samples)
-    global_mask_for_trainable = generate_global_mask1(fisher_info, top_k=top_k_mask, strategy="fisher_least")
+    global_mask_for_trainable, all_fisher_scores_sampled = generate_global_mask1(
+        fisher_info,
+        top_k=top_k_mask,
+        strategy="fisher_least", # Or "fisher_most" depending on your goal
+        quantile_sample_size=quantile_sample_size
+    )
+
+    # --- LOG FISHER VALUES TO WANDB ---
+    if wandb_log and all_fisher_scores_sampled is not None:
+        logging.info("Logging Fisher information histogram to WandB.")
+        # Ensure scores are on CPU and convert to numpy for wandb.Histogram
+        fisher_scores_np = all_fisher_scores_sampled.cpu().numpy()
+
+        # You might want to filter out extreme outliers for better visualization
+        # For example, filter out values above a certain percentile or focus on non-zero values
+        # If there's a huge spike at 0, you might want to visualize with a log scale
+        
+        # Option 1: Basic histogram
+        wandb.log({"Fisher/Fisher_Values_Histogram": wandb.Histogram(fisher_scores_np)}, step=0)
+
+        # Option 2: Log statistics (min, max, median, etc.)
+        wandb.log({
+            "Fisher/Min_Fisher_Value": np.min(fisher_scores_np),
+            "Fisher/Max_Fisher_Value": np.max(fisher_scores_np),
+            "Fisher/Mean_Fisher_Value": np.mean(fisher_scores_np),
+            "Fisher/Median_Fisher_Value": np.median(fisher_scores_np),
+            "Fisher/Std_Fisher_Value": np.std(fisher_scores_np),
+            "Fisher/Zero_Values_Count": (fisher_scores_np == 0).sum(),
+            "Fisher/Zero_Values_Percentage": (fisher_scores_np == 0).sum() / len(fisher_scores_np) * 100
+        }, step=0)
+
+        # Option 3: Log quantiles for specific points (useful for verifying thresholds)
+        quantiles_to_log = [0.01, 0.05, 0.1, 0.2, 0.5, 0.8, 0.9, 0.95, 0.99]
+        for q_val in quantiles_to_log:
+            try:
+                q_threshold = torch.quantile(torch.from_numpy(fisher_scores_np), q_val).item()
+                wandb.log({f"Fisher/Quantile_{int(q_val*100)}percentile": q_threshold}, step=0)
+            except RuntimeError as e:
+                logging.warning(f"Could not compute quantile for {q_val*100}%: {e}")
 
     # --- Apply `requires_grad_(False)` based on the mask ---
-    # Iterate through all parameters and apply the freezing.
-    # We will FREEZE parameters where their corresponding mask value is 0.0.
     total_params_count = 0
     frozen_params_count = 0
     for name, param in model.named_parameters():
-        total_params_count += param.numel() # Count all parameters
+        total_params_count += param.numel()
 
         if name in global_mask_for_trainable:
-            mask_value = global_mask_for_trainable[name]
+            mask_for_param = global_mask_for_trainable[name]
 
-            # If ALL elements in the mask for this parameter are 0.0 (meaning it's NOT among the top_k least important)
-            # then we freeze it.
-            if (mask_value == 0).all():
+            # If ALL elements in the mask for this parameter are 0.0 (meaning it's among the 80% most important)
+            if (mask_for_param == 0).all():
                 param.requires_grad_(False)
                 frozen_params_count += param.numel()
             else:
-                # If any part of the mask is 1.0, it means this parameter IS among the top_k least important
+                # If any part of the mask is 1.0, it means this parameter IS among the 20% least important
                 # and should remain trainable.
                 param.requires_grad_(True)
         else:
-            # If a parameter is NOT in global_mask_for_trainable (e.g., a new head not part of Fisher calculation)
+            # If a parameter is NOT in global_mask_for_trainable (e.g., a new head)
             # ensure it remains trainable.
             param.requires_grad_(True)
 
 
     # --- Log how many parameters were frozen ---
-    # The percentage here is the percentage of parameters that are *frozen*.
     sparsity_percentage_frozen = 100.0 * frozen_params_count / total_params_count
     trainable_percentage = 100.0 - sparsity_percentage_frozen
     if wandb_log:
@@ -571,7 +576,6 @@ def train_model_with_mask(
             optimizer.zero_grad()
             loss.backward()
 
-            # No param.grad.mul_() needed here, as requires_grad takes care of it
             optimizer.step()
 
             running_loss += loss.item() * targets.size(0)
@@ -623,12 +627,9 @@ def train_model_with_mask(
 data = Dataset()
 dino = timm.create_model('vit_small_patch16_224.dino', pretrained=True)
 
-# Ensure all parameters are trainable initially, including the backbone.
-# This makes sure our Fisher-based freezing mechanism is the one deciding.
 for param in dino.parameters():
     param.requires_grad = True
 
-# Replace the head - parameters of the new head are automatically requires_grad=True
 dino.head = nn.Linear(384, 100)
 
 config = Configuration(
@@ -642,7 +643,7 @@ config = Configuration(
     optimizer_class=torch.optim.SGD,
     loss_function=nn.CrossEntropyLoss(),
     scheduler_class=torch.optim.lr_scheduler.CosineAnnealingLR,
-    epochs=25,
+    epochs=10,
     optimizer_params={"momentum": 0.9, "weight_decay": 5e-4},
     scheduler_params={"T_max": 20},
     project_name="fl_centralized_model_editing",
@@ -655,6 +656,8 @@ res_dict = train_model_with_mask(
     train_loader=train_dataloader,
     val_loader=val_dataloader,
     project_name="fl_centralized_fisher_editing",
-    top_k_mask=0.2  # This now means: Keep the 20% least important parameters trainable.
-                    # Consequently, 80% (the most important) will be frozen.
+    top_k_mask=0.1,
+    strategy="fisher_least", # Keep the 20% least important parameters trainable.
+                             # Consequently, 80% (the most important) will be frozen.
+    quantile_sample_size=100000
 )
