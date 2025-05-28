@@ -23,8 +23,8 @@ if __name__ == "__main__":
     '''
     
     dino = timm.create_model('vit_small_patch16_224.dino', pretrained=True)
-    for param in dino.parameters():
-        param.requires_grad = False
+    #for param in dino.parameters():
+        #param.requires_grad = False
     dino.head = nn.Linear(384, 100)
 
     config1 = Configuration(
