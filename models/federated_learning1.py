@@ -45,6 +45,9 @@ class FederatedLearning:
             self.device = torch.device('cpu')
             self.global_model.to(self.device)
 
+      
+
+
         self.local_models = {i: copy.deepcopy(self.global_model).to(self.device) for i in range(self.num_clients)}
         self.global_train_set, self.global_val_set, self.dict_train_client_data, self.dict_val_client_data = self.d()
         
@@ -644,21 +647,14 @@ class FederatedLearning:
 
         return predictions, labels, avg_loss, accuracy
     
-    def generate_global_mask_talos(self, fisher_info: dict, top_k: float = 0.90):
-        """
-        TaLoS-style mask: update only the bottom-k Fisher parameters (least important).
-        Parameters with Fisher >= threshold are frozen (mask=0), others are trainable (mask=1).
-        """
-        all_fisher = torch.cat([v.view(-1) for v in fisher_info.values()])
-        num_params = all_fisher.numel()
-        k_threshold_index = int(num_params * top_k)
-
-        sorted_fisher, _ = torch.sort(all_fisher)
-        threshold = sorted_fisher[k_threshold_index]
-
+    def generate_global_mask_talos(self, fisher_info: dict, top_k: float = 0.9):
         mask = {}
         for name, tensor in fisher_info.items():
+            flat_tensor = tensor.view(-1)
+            # Keep bottom (1 - top_k) fraction trainable
+            threshold = torch.quantile(flat_tensor, 1 - top_k)
             mask[name] = (tensor < threshold).float()
         return mask
+
 
         
