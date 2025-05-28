@@ -314,7 +314,7 @@ def compute_fisher_information(model, dataloader, device, loss_fn, num_samples=1
 
     return fisher
 
-def generate_global_mask1(fisher_info, top_k: float = 0.85, strategy: str = "fisher_least"):
+def generate_global_mask1(fisher_info, top_k: float = 0.20, strategy: str = "fisher_least"):
     if strategy.startswith("fisher"):
         # Collect all scores, flatten them
         all_scores_list = [f.view(-1) for f in fisher_info.values()]
@@ -464,7 +464,7 @@ def train_model_with_mask(
     wandb_log: bool = True,
     wandb_save: bool = True,
     fisher_samples: int = 100,
-    top_k_mask: float = 0.8, # keep top 20% least important parameters
+    top_k_mask: float = 0.2, # keep top 20% least important parameters
 ) -> dict:
     assert train_loader is not None
     if val_loader is not None:
