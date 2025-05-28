@@ -208,6 +208,14 @@ class FederatedLearner:
                 client_states.append(state)
                 client_losses.append(loss)
                 update_ratios.append(ratio)
+                
+                # Log individual client metrics
+                wandb.log({
+                    "round": round_num + 1,
+                    f"client_{client_id}_loss": loss,
+                    f"client_{client_id}_update_ratio": ratio,
+                    f"client_{client_id}_updated_params": ratio * sum(param.numel() for param in self.global_model.parameters() if param.requires_grad)
+                })
             
             # Federated averaging
             aggregated_state = self.federated_averaging(client_states)
@@ -223,14 +231,26 @@ class FederatedLearner:
             print(f"Round {round_num + 1}: Test Accuracy={accuracy:.2f}%, Test Loss={test_loss:.4f}")
             print(f"Avg Client Loss={avg_client_loss:.4f}, Avg Update Ratio={avg_update_ratio:.3f}")
             
-            # Log to wandb
-            wandb.log({
+            # Log aggregated metrics to wandb
+            round_metrics = {
                 "round": round_num + 1,
                 "test_accuracy": accuracy,
                 "test_loss": test_loss,
                 "avg_client_loss": avg_client_loss,
-                "avg_update_ratio": avg_update_ratio
-            })
+                "avg_update_ratio": avg_update_ratio,
+                "min_client_loss": np.min(client_losses),
+                "max_client_loss": np.max(client_losses),
+                "std_client_loss": np.std(client_losses),
+                "min_update_ratio": np.min(update_ratios),
+                "max_update_ratio": np.max(update_ratios)
+            }
+            
+            # Add individual client losses and ratios for comparison
+            for client_id in range(self.num_clients):
+                round_metrics[f"client_{client_id}_loss_round"] = client_losses[client_id]
+                round_metrics[f"client_{client_id}_ratio_round"] = update_ratios[client_id]
+            
+            wandb.log(round_metrics)
         
         print(f"\nTraining completed! Final accuracy: {accuracy:.2f}%")
 
