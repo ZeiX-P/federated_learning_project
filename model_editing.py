@@ -286,7 +286,7 @@ from config import Configuration
 def get_device():
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def compute_fisher_information(model, dataloader, device, loss_fn, num_samples=100):
+def compute_fisher_information(model, dataloader, device, loss_fn, num_samples=1000):
     model.eval()
     fisher = {}
     for name, param in model.named_parameters():
