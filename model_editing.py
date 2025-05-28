@@ -434,9 +434,9 @@ def train_model_with_mask(
     project_name: Optional[str] = None,
     wandb_log: bool = True,
     wandb_save: bool = True,
-    fisher_samples: int = 100,
+    fisher_samples: int = 10000,
     top_k_mask: float = 0.2, # percentage of parameters to keep trainable (based on strategy)
-    quantile_sample_size: int = 1_000_000,
+    quantile_sample_size: int = 1000000,
 ) -> dict:
     assert train_loader is not None
     if val_loader is not None:
