@@ -464,7 +464,7 @@ def train_model_with_mask(
     wandb_log: bool = True,
     wandb_save: bool = True,
     fisher_samples: int = 100,
-    top_k_mask: float = 0.2, # keep top 20% least important parameters
+    top_k_mask: float = 0.8, # keep top 20% least important parameters
 ) -> dict:
     assert train_loader is not None
     if val_loader is not None:
