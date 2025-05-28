@@ -85,19 +85,61 @@ criterion = nn.CrossEntropyLoss()
 
 for rnd in range(ROUNDS):
     local_weights = []
+
     for cid in range(NUM_CLIENTS):
         local_model = copy.deepcopy(global_model)
         data = get_loader(client_data[cid])
+        
+        # Fisher info
         fisher = compute_fisher(local_model, data, criterion)
+        fisher_mean = torch.stack([f.mean() for f in fisher.values()]).mean().item()
+        fisher_std = torch.stack([f.std() for f in fisher.values()]).mean().item()
+
+        # Mask
         mask = mask_low_fisher(fisher, keep_ratio=0.5)
-        train_with_mask(local_model, data, criterion, mask)
+        total, kept = 0, 0
+        for m in mask.values():
+            total += m.numel()
+            kept += m.sum().item()
+        sparsity = 1 - (kept / total)
+
+        # Train with mask
+        local_model.train()
+        opt = optim.Adam(local_model.parameters(), lr=1e-4)
+        running_loss, correct_local, total_local = 0, 0, 0
+
+        for epoch in range(EPOCHS):
+            for x, y in data:
+                x, y = x.to(DEVICE), y.to(DEVICE)
+                opt.zero_grad()
+                out = local_model(x)
+                loss = criterion(out, y)
+                loss.backward()
+                with torch.no_grad():
+                    for n, p in local_model.named_parameters():
+                        if p.grad is not None:
+                            p.grad *= mask[n].to(DEVICE)
+                opt.step()
+                running_loss += loss.item()
+                correct_local += (out.argmax(1) == y).sum().item()
+                total_local += y.size(0)
+
+        acc_local = correct_local / total_local
         local_weights.append({n: p.detach().cpu() for n, p in local_model.named_parameters()})
-    
-    # FedAvg
+
+        wandb.log({
+            f"round_{rnd}/client_{cid}/fisher_mean": fisher_mean,
+            f"round_{rnd}/client_{cid}/fisher_std": fisher_std,
+            f"round_{rnd}/client_{cid}/param_sparsity": sparsity,
+            f"round_{rnd}/client_{cid}/train_loss": running_loss / len(data),
+            f"round_{rnd}/client_{cid}/train_acc": acc_local,
+        })
+
+    # Federated averaging
     for name, param in global_model.named_parameters():
         if param.requires_grad:
             param.data = torch.stack([w[name] for w in local_weights], 0).mean(0).to(DEVICE)
-    
+
     acc = test(global_model)
-    wandb.log({"round": rnd, "test_acc": acc})
-    print(f"Round {rnd} - Test Acc: {acc:.4f}")
+    wandb.log({f"round_{rnd}/global_test_acc": acc})
+    print(f"Round {rnd} - Global Test Acc: {acc:.4f}")
