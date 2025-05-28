@@ -272,6 +272,7 @@ res_dict = train_model_with_mask(
     top_k_mask=0.2  # keep top 20% most important parameters
 )
 '''
+
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
@@ -317,8 +318,15 @@ def generate_global_mask1(fisher_info, top_k: float = 0.2, strategy: str = "fish
     if strategy.startswith("fisher"):
         all_scores = torch.cat([f.view(-1) for f in fisher_info.values()])
         if strategy == "fisher_least":
+            # --- MODIFIED LOGIC HERE ---
+            # If we want to KEEP the top_k (20%) LEAST important,
+            # then the threshold means anything BELOW or EQUAL to it is kept (mask=1),
+            # and anything ABOVE it is frozen (mask=0).
             threshold = torch.quantile(all_scores, top_k)
+            # 'compare' now returns True for parameters to be KEPT (mask=1)
+            # and False for parameters to be FROZEN (mask=0)
             compare = lambda x: x <= threshold
+            # --- END MODIFIED LOGIC ---
         elif strategy == "fisher_most":
             threshold = torch.quantile(all_scores, 1 - top_k)
             compare = lambda x: x >= threshold
@@ -348,13 +356,13 @@ def generate_global_mask1(fisher_info, top_k: float = 0.2, strategy: str = "fish
     return mask
 
 def generate_global_mask(fisher_info, top_k: float = 0.2):
+    # This function is not used in the main training flow, but kept for completeness
     all_scores = torch.cat([f.view(-1) for f in fisher_info.values()])
     threshold = torch.quantile(all_scores, 1 - top_k)
 
     mask = {}
     for name, tensor in fisher_info.items():
-        mask[name] = (tensor >= threshold).float()
-
+        mask[name] = (tensor >= threshold).float() # Keep these (mask = 1)
     return mask
 
 def compute_predictions(model: nn.Module, dataloader: DataLoader, device: torch.device, loss_function: Optional[nn.Module] = None):
@@ -382,12 +390,10 @@ def compute_predictions(model: nn.Module, dataloader: DataLoader, device: torch.
 
     return predictions, labels, avg_loss, accuracy
 
----
+
 ## Modified `train_model_with_mask` Function
 
-The key changes are within the `train_model_with_mask` function, specifically in how the `global_mask` is applied.
 
-```python
 def train_model_with_mask(
     *,
     training_params,
@@ -397,7 +403,7 @@ def train_model_with_mask(
     wandb_log: bool = True,
     wandb_save: bool = True,
     fisher_samples: int = 100,
-    top_k_mask: float = 0.2,
+    top_k_mask: float = 0.2, # keep top 20% least important parameters
 ) -> dict:
     assert train_loader is not None
     if val_loader is not None:
@@ -421,75 +427,74 @@ def train_model_with_mask(
     device = get_device()
     model = training_params.model.to(device)
     loss_func = training_params.loss_function
-    optimizer = training_params.optimizer
+    original_optimizer_class = training_params.optimizer_class
+    original_optimizer_params = training_params.optimizer_params
+    optimizer = None # Placeholder, will be initialized later
     scheduler = training_params.scheduler
     num_epochs = training_params.epochs
     best_acc = 0
 
-    # ---- Step 1: Compute Fisher Info and Mask ----
+    # --- Step 1: Compute Fisher Info and Generate Mask ---
+    # `generate_global_mask1` with `fisher_least` and `top_k=0.2` will produce a mask where:
+    #   - `1.0` for the 20% least important parameters (these are the ones we want to KEEP TRAINABLE)
+    #   - `0.0` for the 80% most important parameters (these are the ones we want to FREEZE)
     fisher_info = compute_fisher_information(model, train_loader, device, loss_func, num_samples=fisher_samples)
-    global_mask = generate_global_mask1(fisher_info, top_k=top_k_mask, strategy="fisher_least")
-
-    # ---- Log how many parameters were masked ----
-    total_params = 0
-    zeroed_params = 0
-    for name, mask in global_mask.items():
-        total_params += mask.numel()
-        zeroed_params += (mask == 0).sum().item()
-
-    if wandb_log:
-        wandb.log({
-            "Masking/Total Parameters": total_params,
-            "Masking/Zeroed Parameters": zeroed_params,
-            "Masking/Sparsity (%)": 100.0 * zeroed_params / total_params
-        })
-    else:
-        logging.info(f"Masking: {zeroed_params}/{total_params} parameters set to 0 "
-                     f"({100.0 * zeroed_params / total_params:.2f}%)")
+    global_mask_for_trainable = generate_global_mask1(fisher_info, top_k=top_k_mask, strategy="fisher_least")
 
     # --- Apply `requires_grad_(False)` based on the mask ---
-    # Parameters with a 0 in the mask will be frozen
-    # Parameters with a 1 in the mask will remain trainable
+    # Iterate through all parameters and apply the freezing.
+    # We will FREEZE parameters where their corresponding mask value is 0.0.
+    total_params_count = 0
+    frozen_params_count = 0
     for name, param in model.named_parameters():
-        if name in global_mask:
-            # We want to freeze parameters where the mask value is 0 (i.e., less important)
-            # This requires checking if the entire parameter corresponding to the mask is zeroed out.
-            # Assuming global_mask[name] is a binary tensor (0s and 1s) with the same shape as param,
-            # we check if all elements in the mask for this parameter are zero.
-            # If mask[name] contains floats, you might need a small epsilon for comparison:
-            # if (global_mask[name] < 1e-6).all():
-            if (global_mask[name] == 0).all(): # This assumes global_mask is binary after generate_global_mask1
+        total_params_count += param.numel() # Count all parameters
+
+        if name in global_mask_for_trainable:
+            mask_value = global_mask_for_trainable[name]
+
+            # If ALL elements in the mask for this parameter are 0.0 (meaning it's NOT among the top_k least important)
+            # then we freeze it.
+            if (mask_value == 0).all():
                 param.requires_grad_(False)
+                frozen_params_count += param.numel()
             else:
-                # If any part of the mask is 1, ensure it's trainable (it might have been frozen before)
+                # If any part of the mask is 1.0, it means this parameter IS among the top_k least important
+                # and should remain trainable.
                 param.requires_grad_(True)
-        # If a parameter is NOT in global_mask, its requires_grad status remains unchanged.
-        # Often, you might want to default to `True` for unmasked params if they were False by default.
-        # For a pre-trained model, head layers might be `requires_grad=True` by default, but backbone could be `False`.
-        # Ensure that if a parameter is *not* in your `global_mask`, it remains trainable by default,
-        # unless you explicitly intend to freeze it.
-        # This part depends on your specific model architecture and initial `requires_grad` setup.
-        # If you started with all parameters `requires_grad=True` and only want to freeze based on `global_mask`,
-        # then the `else` block above (setting to True) is less critical unless you're reusing the model.
-        # However, for fine-tuning, you often start with all trainable then selectively freeze.
+        else:
+            # If a parameter is NOT in global_mask_for_trainable (e.g., a new head not part of Fisher calculation)
+            # ensure it remains trainable.
+            param.requires_grad_(True)
 
-    # After freezing, re-initialize the optimizer with only the trainable parameters
-    # This is crucial because the optimizer was initialized with all parameters,
-    # but now some have their requires_grad set to False.
-    # We must only pass parameters that require gradients to the optimizer.
-    optimizer_params = [p for p in model.parameters() if p.requires_grad]
-    # Recreate the optimizer with only the trainable parameters.
-    # You'll need to adapt this based on your Configuration class and how optimizer is created.
-    # For example, if Configuration.optimizer_class takes a list of parameters:
-    training_params.optimizer = training_params.optimizer_class(
-        optimizer_params,
+
+    # --- Log how many parameters were frozen ---
+    # The percentage here is the percentage of parameters that are *frozen*.
+    sparsity_percentage_frozen = 100.0 * frozen_params_count / total_params_count
+    trainable_percentage = 100.0 - sparsity_percentage_frozen
+    if wandb_log:
+        wandb.log({
+            "Trainable Parameters/Total Parameters": total_params_count,
+            "Trainable Parameters/Frozen Parameters": frozen_params_count,
+            "Trainable Parameters/Frozen %": sparsity_percentage_frozen,
+            "Trainable Parameters/Trainable %": trainable_percentage
+        })
+    else:
+        logging.info(f"Freezing: {frozen_params_count}/{total_params_count} parameters frozen "
+                     f"({sparsity_percentage_frozen:.2f}%). "
+                     f"Trainable: {trainable_percentage:.2f}%")
+
+    # --- Re-initialize the optimizer with ONLY the trainable parameters ---
+    trainable_params = [p for p in model.parameters() if p.requires_grad]
+    optimizer = original_optimizer_class(
+        trainable_params,
         lr=training_params.learning_rate,
-        **training_params.optimizer_params
+        **original_optimizer_params
     )
-    optimizer = training_params.optimizer # Update the local optimizer variable
+    if training_params.scheduler_class:
+        scheduler = training_params.scheduler_class(optimizer, **training_params.scheduler_params)
 
 
-    # ---- Step 2: Train Model with Mask (now applied via requires_grad) ----
+    # --- Step 2: Train Model (now with permanently frozen parameters) ---
     for epoch in range(1, num_epochs + 1):
         model.train()
         running_loss = 0.0
@@ -504,12 +509,7 @@ def train_model_with_mask(
             optimizer.zero_grad()
             loss.backward()
 
-            # --- Removed the `param.grad.mul_` line ---
-            # with torch.no_grad():
-            #     for name, param in model.named_parameters():
-            #         if name in global_mask and param.grad is not None:
-            #             param.grad.mul_(global_mask[name])
-
+            # No param.grad.mul_() needed here, as requires_grad takes care of it
             optimizer.step()
 
             running_loss += loss.item() * targets.size(0)
@@ -561,14 +561,13 @@ def train_model_with_mask(
 data = Dataset()
 dino = timm.create_model('vit_small_patch16_224.dino', pretrained=True)
 
-# Important: Ensure that by default, all parameters are trainable if you intend to freeze specific ones.
-# If you comment this out, the model's head will be trainable, but the backbone might be frozen by default by timm.
-# For selective freezing based on Fisher, it's generally good to start with everything trainable
-# and then set requires_grad=False for the ones you want to freeze.
+# Ensure all parameters are trainable initially, including the backbone.
+# This makes sure our Fisher-based freezing mechanism is the one deciding.
 for param in dino.parameters():
-    param.requires_grad = True # Ensure all parameters are trainable initially
+    param.requires_grad = True
 
-dino.head = nn.Linear(384, 100) # This replaces the head, its params will be new and require_grad=True by default
+# Replace the head - parameters of the new head are automatically requires_grad=True
+dino.head = nn.Linear(384, 100)
 
 config = Configuration(
     model=dino,
@@ -594,5 +593,6 @@ res_dict = train_model_with_mask(
     train_loader=train_dataloader,
     val_loader=val_dataloader,
     project_name="fl_centralized_fisher_editing",
-    top_k_mask=0.2  # keep top 20% most important parameters (freeze bottom 80%)
+    top_k_mask=0.2  # This now means: Keep the 20% least important parameters trainable.
+                    # Consequently, 80% (the most important) will be frozen.
 )
