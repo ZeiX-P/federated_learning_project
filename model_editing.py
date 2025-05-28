@@ -314,7 +314,7 @@ def compute_fisher_information(model, dataloader, device, loss_fn, num_samples=1
 
     return fisher
 
-def generate_global_mask1(fisher_info, top_k: float = 0.2, strategy: str = "fisher_least"):
+def generate_global_mask1(fisher_info, top_k: float = 0.85, strategy: str = "fisher_least"):
     if strategy.startswith("fisher"):
         # Collect all scores, flatten them
         all_scores_list = [f.view(-1) for f in fisher_info.values()]
