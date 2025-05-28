@@ -473,7 +473,7 @@ def train_model_with_mask(
     global_mask_for_trainable, all_fisher_scores_sampled = generate_global_mask1(
         fisher_info,
         top_k=top_k_mask,
-        strategy="fisher_least", # Specify the strategy here directly
+        strategy="magnitude_lowest", # Specify the strategy here directly
         quantile_sample_size=quantile_sample_size
     )
 
