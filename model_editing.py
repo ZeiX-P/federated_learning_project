@@ -316,31 +316,92 @@ def compute_fisher_information(model, dataloader, device, loss_fn, num_samples=1
 
 def generate_global_mask1(fisher_info, top_k: float = 0.2, strategy: str = "fisher_least"):
     if strategy.startswith("fisher"):
-        all_scores = torch.cat([f.view(-1) for f in fisher_info.values()])
+        # Collect all scores, flatten them
+        all_scores_list = [f.view(-1) for f in fisher_info.values()]
+        
+        # Concatenate them to get a single tensor of all scores
+        # This is where it gets too large for torch.quantile directly
+        # all_scores = torch.cat(all_scores_list) # This line causes the error
+
+        # --- MODIFICATION: Subsampling for Quantile Calculation ---
+        # Determine a reasonable sample size. 1M to 10M is usually sufficient for good approximation.
+        # Adjust based on your model size and memory constraints.
+        sample_size = 100000 # Example: 10 million samples. Adjust if still too large or too slow.
+
+        # Estimate total number of elements without concatenating the whole thing
+        total_elements = sum(f.numel() for f in fisher_info.values())
+
+        if total_elements > sample_size:
+            # If total elements exceed sample_size, take a random sample
+            # Create a list of sampled tensors
+            sampled_tensors = []
+            for score_tensor in all_scores_list:
+                num_elements = score_tensor.numel()
+                # Calculate what proportion of the sample this tensor should contribute
+                proportion = num_elements / total_elements
+                elements_to_sample_from_this_tensor = int(sample_size * proportion)
+                
+                if elements_to_sample_from_this_tensor > 0 and num_elements > 0:
+                    # Ensure we don't try to sample more than available elements
+                    actual_sample_size = min(elements_to_sample_from_this_tensor, num_elements)
+                    
+                    # Randomly permute and take the first `actual_sample_size` elements
+                    perm = torch.randperm(num_elements, device=score_tensor.device)
+                    sampled_tensors.append(score_tensor.view(-1)[perm[:actual_sample_size]])
+            
+            if len(sampled_tensors) == 0:
+                raise ValueError("Could not collect enough samples for quantile calculation. Check fisher_info and sample_size.")
+            
+            # Concatenate the sampled tensors
+            sampled_all_scores = torch.cat(sampled_tensors)
+        else:
+            # If the total number of elements is manageable, use all of them
+            sampled_all_scores = torch.cat(all_scores_list)
+        # --- END MODIFICATION ---
+
         if strategy == "fisher_least":
-            # --- MODIFIED LOGIC HERE ---
-            # If we want to KEEP the top_k (20%) LEAST important,
-            # then the threshold means anything BELOW or EQUAL to it is kept (mask=1),
-            # and anything ABOVE it is frozen (mask=0).
-            threshold = torch.quantile(all_scores, top_k)
-            # 'compare' now returns True for parameters to be KEPT (mask=1)
-            # and False for parameters to be FROZEN (mask=0)
+            # Now compute quantile on the (potentially sampled) `sampled_all_scores`
+            threshold = torch.quantile(sampled_all_scores, top_k)
             compare = lambda x: x <= threshold
-            # --- END MODIFIED LOGIC ---
         elif strategy == "fisher_most":
-            threshold = torch.quantile(all_scores, 1 - top_k)
+            threshold = torch.quantile(sampled_all_scores, 1 - top_k)
             compare = lambda x: x >= threshold
         else:
             raise ValueError(f"Unknown Fisher strategy: {strategy}")
+        
         mask = {name: compare(tensor).float() for name, tensor in fisher_info.items()}
 
+    # ... (rest of your generate_global_mask1 function remains the same)
     elif strategy in {"magnitude_lowest", "magnitude_highest"}:
-        all_params = torch.cat([p.view(-1).abs() for p in fisher_info.values()])
+        all_params_list = [p.view(-1).abs() for p in fisher_info.values()]
+        
+        # Apply similar subsampling for magnitude strategies if needed
+        # sampled_all_params = ... (similar subsampling logic as above)
+
+        total_elements_params = sum(p.numel() for p in fisher_info.values())
+        if total_elements_params > sample_size: # Use same sample_size for consistency
+            sampled_tensors_params = []
+            for param_tensor in all_params_list:
+                num_elements = param_tensor.numel()
+                proportion = num_elements / total_elements_params
+                elements_to_sample_from_this_tensor = int(sample_size * proportion)
+                if elements_to_sample_from_this_tensor > 0 and num_elements > 0:
+                     actual_sample_size = min(elements_to_sample_from_this_tensor, num_elements)
+                     perm = torch.randperm(num_elements, device=param_tensor.device)
+                     sampled_tensors_params.append(param_tensor.view(-1)[perm[:actual_sample_size]])
+            
+            if len(sampled_tensors_params) == 0:
+                 raise ValueError("Could not collect enough samples for quantile calculation. Check fisher_info and sample_size.")
+            
+            sampled_all_params = torch.cat(sampled_tensors_params)
+        else:
+            sampled_all_params = torch.cat(all_params_list)
+
         if strategy == "magnitude_lowest":
-            threshold = torch.quantile(all_params, top_k)
+            threshold = torch.quantile(sampled_all_params, top_k)
             compare = lambda x: x.abs() <= threshold
         else:
-            threshold = torch.quantile(all_params, 1 - top_k)
+            threshold = torch.quantile(sampled_all_params, 1 - top_k)
             compare = lambda x: x.abs() >= threshold
         mask = {name: compare(p).float() for name, p in fisher_info.items()}
 
