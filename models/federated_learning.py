@@ -797,7 +797,12 @@ class FederatedLearning:
         # Apply the binary mask using requires_grad
         for name, param in model.named_parameters():
             if name in mask:
-                param.requires_grad_(bool(mask[name].sum().item()))
+                
+                if (mask[name] == 0).all(): # This assumes global_mask is binary after generate_global_mask1
+                    param.requires_grad_(False)
+                else:
+                    # If any part of the mask is 1, ensure it's trainable (it might have been frozen before)
+                    param.requires_grad_(True)
 
         
 
