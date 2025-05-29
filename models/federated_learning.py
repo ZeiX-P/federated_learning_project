@@ -746,18 +746,18 @@ class FederatedLearning:
                     shuffle=True
                 )
 
-                fisher = self.compute_fisher_diag(
+                fisher = self.compute_fisher_information(
                     self.local_models[client], train_loader, self.config.loss_function
                 )
-                fisher_named = self.reshape_fisher_to_named(fisher, self.local_models[client])
-                dict_fisher_scores[client] = fisher_named
+                #fisher_named = self.reshape_fisher_to_named(fisher, self.local_models[client])
+                #dict_fisher_scores[client] = fisher_named
 
-                local_mask = self.generate_global_mask(fisher_named, top_k=0.2)
+                local_mask = self.generate_global_mask(fisher, top_k=0.1)
                 dict_client_masks[client] = local_mask
 
                 wandb.log({
                     f"client_{client}/mask_sparsity": sum(1 for v in local_mask.values() if v.sum() == 0) / len(local_mask),
-                    f"client_{client}/fisher_norm": sum(v.norm().item() for v in fisher_named.values())
+                    f"client_{client}/fisher_norm": sum(v.norm().item() for v in fisher.values())
                 })
 
             # Step 2: Train clients with their own masks
@@ -895,6 +895,33 @@ class FederatedLearning:
 
         return fisher_diag
 
+    def compute_fisher_information(model, dataloader, device, loss_fn, num_samples=1000):
+        model.eval()
+        fisher = {}
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                fisher[name] = torch.zeros_like(param)
+
+        count = 0
+        for inputs, targets in dataloader:
+            if count >= num_samples:
+                break
+            inputs, targets = inputs.to(device), targets.to(device)
+            model.zero_grad()
+            outputs = model(inputs)
+            loss = loss_fn(outputs, targets)
+            loss.backward()
+
+            for name, param in model.named_parameters():
+                if param.grad is not None:
+                    fisher[name] += param.grad.data ** 2
+
+            count += 1
+
+        for name in fisher:
+            fisher[name] /= count
+
+        return fisher
 
     def reshape_fisher_to_named(self, fisher_flat, model):
         param_sizes = [p.numel() for _, p in model.named_parameters()]
@@ -944,7 +971,7 @@ class FederatedLearning:
         return aggregated
 
 
-    def generate_global_mask(self,fisher_info, top_k: float = 0.2, strategy: str = "fisher_left_only"):
+    def generate_global_mask(self,fisher_info, top_k: float = 0.1, strategy: str = "fisher_left_only"):
         if strategy.startswith("fisher"):
             all_scores = torch.cat([f.view(-1) for f in fisher_info.values()])
             
