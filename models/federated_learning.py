@@ -829,7 +829,7 @@ class FederatedLearning:
             correct, total = 0, 0
 
             for inputs, targets in train_loader:
-                inputs, targets = inputs.to(self.config.device), targets.to(self.config.device)
+                inputs, targets = inputs.to(self.device), targets.to(self.device)
 
                 preds = model(inputs)
                 loss = loss_func(preds, targets)
