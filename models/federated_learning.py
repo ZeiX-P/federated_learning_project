@@ -799,6 +799,20 @@ class FederatedLearning:
             if name in mask:
                 param.requires_grad_(bool(mask[name].sum().item()))
 
+        total_params = 0
+        zeroed_params = 0
+        for name, mask in mask.items():
+            total_params += mask.numel()
+            zeroed_params += (mask == 0).sum().item()
+
+        
+        wandb.log({
+                "Masking/Total Parameters": total_params,
+                "Masking/Zeroed Parameters": zeroed_params,
+                "Masking/Sparsity (%)": 100.0 * zeroed_params / total_params
+            })
+        
+
         # Filter parameters by requires_grad
         optimizer_params = [p for p in model.parameters() if p.requires_grad]
 
