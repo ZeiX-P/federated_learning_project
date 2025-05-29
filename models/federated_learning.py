@@ -620,168 +620,7 @@ class FederatedLearning:
         self.global_model.load_state_dict(avg_weights)
         for client_id in range(self.num_clients):
             self.local_models[client_id].load_state_dict(copy.deepcopy(avg_weights))
-
-    def run(self):
-        for round in range(self.num_rounds):
-            print(f"--- Round {round+1}/{self.num_rounds} ---")
-            wandb.log({"round_progress": round/self.num_rounds * 100})
-            
-            # Select fraction of clients for this round
-            num_selected_clients = max(1, int(self.client_fraction * self.num_clients))
-            selected_clients = random.sample(range(self.num_clients), num_selected_clients)
-            
-            wandb.log({"active_clients": num_selected_clients, "round": round})
-            
-            
-            
-            # Train selected clients
-            for client in selected_clients:
-                data_client_train_set = self.dict_train_client_data[client]
-                data_client_val_set = self.dict_val_client_data[client]
-
-                train_loader = DataLoader(data_client_train_set, batch_size=self.config.batch_size, shuffle=True)
-                val_loader = DataLoader(data_client_val_set, batch_size=self.config.batch_size, shuffle=False)
-                
-                self.train(self.local_models[client], train_loader, val_loader, client, round)
-
-            # Aggregate and evaluate global model
-            self.aggregate()
-            global_metrics = self.evaluate_global_model()
-            
-            # Log global model performance for this round
-            wandb.log({
-                "global/val_loss": global_metrics["val_loss"],
-                "global/val_accuracy": global_metrics.get("val_accuracy", 0),
-                "round": round
-            })
-            
-            print(f"Round {round+1} - Global validation accuracy: {global_metrics.get('val_accuracy', 0):.2f}%")
-
-    def train(self, model, train_loader, val_loader, client, round):
-        # Create a new optimizer instance for each client with proper parameters
-        try:
-            if hasattr(self.config, 'optimizer') and self.config.optimizer == 'sgd':
-                optimizer = torch.optim.SGD(
-                    model.parameters(),
-                    lr=self.config.learning_rate,
-                    momentum=self.config.momentum,
-                    weight_decay=self.config.weight_decay
-                )
-            elif hasattr(self.config, 'optimizer') and self.config.optimizer == 'adam':
-                optimizer = torch.optim.Adam(
-                    model.parameters(),
-                    lr=self.config.learning_rate,
-                    weight_decay=self.config.weight_decay
-                )
-            else:
-                # Default to SGD if not specified or if there's an issue
-                optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
-                print(f"Using default SGD optimizer for client {client}")
-        except Exception as e:
-            print(f"Error creating optimizer, using default: {e}")
-            optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
-
-        # Learning rate scheduler removed - causing compatibility issues
-        scheduler = None
-
-        for epoch in range(self.epochs_per_round):
-            print(f"--- Client {client}, Epoch {epoch+1}/{self.epochs_per_round} ---")
-            model.train()
-            running_loss = 0
-            correct = 0
-            total = 0
-            
-            # Training loop
-            for batch_idx, (data, target) in enumerate(train_loader):
-                # Handle different data types (make sure target is appropriate type)
-                try:
-                    # Check if we have model.output_dim attribute
-                    output_dim = getattr(model, 'output_dim', None)
-                    
-                    if isinstance(target, torch.Tensor) and target.dtype != torch.long and output_dim == 1:
-                        # Regression task possibly
-                        target = target.float()
-                    elif not isinstance(target, torch.Tensor):
-                        target = torch.tensor(target, device=self.device)
-                    else:
-                        # Classification task likely - ensure long type for CrossEntropyLoss
-                        target = target.long()
-                except Exception as e:
-                    print(f"Error in target processing: {e}")
-                    # Default to making sure target is a tensor
-                    if not isinstance(target, torch.Tensor):
-                        target = torch.tensor(target, device=self.device)
-                
-                data, target = data.to(self.device), target.to(self.device)
-                
-                # Forward pass
-                optimizer.zero_grad()
-                output = model(data)
-                
-                # Make sure output shape matches target for loss calculation
-                if output.shape != target.shape and output.dim() > 1 and output.size(1) == 1:
-                    output = output.squeeze(1)
-                
-                try:
-                    loss = self.config.loss_function(output, target)
-                except Exception as e:
-                    print(f"Error in loss calculation: {e}")
-                    print(f"Output shape: {output.shape}, Target shape: {target.shape}")
-                    print(f"Output dtype: {output.dtype}, Target dtype: {target.dtype}")
-                    continue
-                
-                loss.backward()
-                optimizer.step()
-                running_loss += loss.item()
-                
-                # Calculate accuracy if classification task
-                try:
-                    if hasattr(output, 'shape') and output.dim() > 1 and output.size(1) > 1:
-                        # Multi-class classification
-                        _, predicted = output.max(1)
-                        total += target.size(0)
-                        correct += predicted.eq(target).sum().item()
-                except Exception as e:
-                    print(f"Error calculating training accuracy: {e}")
-                
-                # Log mini-batch progress occasionally
-                if batch_idx % 10 == 0:
-                    wandb.log({
-                        f"client_{client}/batch_loss": loss.item(),
-                        "round": round,
-                        "epoch": epoch,
-                        "batch": batch_idx
-                    })
-
-            avg_train_loss = running_loss / len(train_loader) if len(train_loader) > 0 else 0
-            train_accuracy = 100 * correct / total if total > 0 else 0
-
-            # Validation phase
-            val_metrics = self.validate(model, val_loader)
-            avg_val_loss = val_metrics["val_loss"]
-            val_accuracy = val_metrics["val_accuracy"]
-            
-            # Learning rate scheduling removed due to compatibility issues
-            # Just log the current learning rate
-            current_lr = optimizer.param_groups[0]['lr']
-            if batch_idx == 0:
-                print(f"Current learning rate: {current_lr}")
-
-            print(f"Round {round}, Client {client}, Epoch {epoch}, "
-                  f"Train Loss: {avg_train_loss:.4f}, Train Acc: {train_accuracy:.2f}%, "
-                  f"Val Loss: {avg_val_loss:.4f}, Val Acc: {val_accuracy:.2f}%")
-
-            # Log metrics for this client
-            wandb.log({
-                f"client_{client}/train_loss": avg_train_loss,
-                f"client_{client}/train_accuracy": train_accuracy,
-                f"client_{client}/val_loss": avg_val_loss,
-                f"client_{client}/val_accuracy": val_accuracy,
-                f"client_{client}/learning_rate": optimizer.param_groups[0]['lr'],
-                "round": round,
-                "epoch": epoch
-            })
-    
+     
     def validate(self, model, val_loader):
         """Separate validation function for cleaner code."""
         model.eval()
@@ -913,7 +752,7 @@ class FederatedLearning:
                 fisher_named = self.reshape_fisher_to_named(fisher, self.local_models[client])
                 dict_fisher_scores[client] = fisher_named
 
-                local_mask = self.create_mask_from_fisher(fisher_named, top_k=0.5)
+                local_mask = self.generate_global_mask(fisher_named, top_k=0.2)
                 dict_client_masks[client] = local_mask
 
                 wandb.log({
@@ -954,75 +793,60 @@ class FederatedLearning:
             })
 
 
-    def run_model_editing_fsmm(self):
-        for round in range(self.num_rounds):
-            wandb.log({"round": round, "round_progress": (round + 1) / self.num_rounds * 100})
+    def train_with_global_mask(self, model, train_loader, val_loader, client_id, round, mask):
+        # Apply the binary mask using requires_grad
+        for name, param in model.named_parameters():
+            if name in mask:
+                param.requires_grad_(bool(mask[name].sum().item()))
 
-            num_selected_clients = max(1, int(self.client_fraction * self.num_clients))
-            selected_clients = random.sample(range(self.num_clients), num_selected_clients)
+        # Filter parameters by requires_grad
+        optimizer_params = [p for p in model.parameters() if p.requires_grad]
+
+        # Initialise local optimizer instance
+        optimizer = self.config.optimizer_class(
+            optimizer_params,
+            lr=self.config.learning_rate,
+            **self.config.optimizer_params
+        )
+
+        scheduler = None
+        if self.config.scheduler_class:
+            scheduler = self.config.scheduler_class(optimizer, **self.config.scheduler_params)
+
+        loss_func = self.config.loss_function
+
+        # Training loop
+        for epoch in range(1, self.config.num_epochs + 1):
+            model.train()
+            running_loss = 0.0
+            correct, total = 0, 0
+
+            for inputs, targets in train_loader:
+                inputs, targets = inputs.to(self.config.device), targets.to(self.config.device)
+
+                preds = model(inputs)
+                loss = loss_func(preds, targets)
+
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+                running_loss += loss.item() * targets.size(0)
+                _, predicted = preds.max(1)
+                total += targets.size(0)
+                correct += predicted.eq(targets).sum().item()
+
+            train_loss = running_loss / total
+            train_accuracy = 100.0 * correct / total
+
+            if scheduler is not None:
+                scheduler.step()
 
             wandb.log({
-                "active_clients": num_selected_clients,
-                "selected_clients": selected_clients
-            })
-
-            dict_fisher_scores = {}
-            dict_feature_signatures = {}
-            dict_local_updates = {}
-            dict_local_masks = {}
-
-            # Phase 1: Client Processing
-            for client in selected_clients:
-                train_loader = DataLoader(self.dict_train_client_data[client], batch_size=self.config.batch_size, shuffle=True)
-
-                # Step 1: Compute Fisher (sensitivity)
-                fisher = self.compute_fisher_diag(self.local_models[client], train_loader, self.config.loss_function)
-                fisher_named = self.reshape_fisher_to_named(fisher, self.local_models[client])
-                dict_fisher_scores[client] = fisher_named
-
-                # Step 2: Grad-CAM (semantic attribution)
-
-                temp_model_for_gradcam = copy_model(self.local_models[client])
-                for param in temp_model_for_gradcam.parameters():
-                    param.requires_grad = True # Enable gradients for all params in the temporary copy
-
-                # Ensure the temporary model is in evaluation mode for feature extraction
-                temp_model_for_gradcam.eval()
-
-                feature_sig = extract_param_feature_map(temp_model_for_gradcam, train_loader, self.device,temp_model_for_gradcam.blocks[-1].norm1)
-                dict_feature_signatures[client] = feature_sig
-
-                # Step 3: Build adaptive mask
-                adaptive_mask = {}
-                for name in fisher_named:
-                    fisher_tensor = fisher_named[name]
-                    sig_val = feature_sig.get(name, 0.0)
-                    threshold = torch.quantile(fisher_tensor.view(-1), 0.5)  # Mid-sensitivity
-                    mask = (fisher_tensor < threshold).float()
-                    if sig_val > 0.1:  # Heuristically filter semantically important params
-                        adaptive_mask[name] = mask
-                    else:
-                        adaptive_mask[name] = torch.zeros_like(mask)
-                dict_local_masks[client] = adaptive_mask
-
-                # Step 4: Train with adaptive mask
-                val_loader = DataLoader(self.dict_val_client_data[client], batch_size=self.config.batch_size, shuffle=False)
-                local_model_before = copy_model(self.local_models[client])
-                self.train_with_global_mask(self.local_models[client], train_loader, val_loader, client, round, adaptive_mask)
-                local_update = compute_model_diff(local_model_before, self.local_models[client])
-                dict_local_updates[client] = local_update
-
-            # Phase 2: Server Aggregation
-            aggregated_update = self.adaptive_merge(dict_local_updates, dict_local_masks, dict_feature_signatures)
-
-            # Step 5: Apply update
-            apply_model_diff(self.global_model, aggregated_update)
-
-            # Step 6: Evaluate
-            global_metrics = self.evaluate_global_model()
-            wandb.log({
-                "global/val_loss": global_metrics["val_loss"],
-                "global/val_accuracy": global_metrics.get("val_accuracy", 0)
+                f"client_{client_id}/train_loss": train_loss,
+                f"client_{client_id}/train_accuracy": train_accuracy,
+                "round": round,
+                "epoch": epoch
             })
 
 
@@ -1236,6 +1060,57 @@ class FederatedLearning:
                     # aggregated[name] = torch.zeros_like(stacked[0])
         return aggregated
 
+
+    def generate_global_mask(fisher_info, top_k: float = 0.2, strategy: str = "fisher_left_only"):
+        if strategy.startswith("fisher"):
+            all_scores = torch.cat([f.view(-1) for f in fisher_info.values()])
+            
+            # Use kthvalue for better memory efficiency with large tensors
+            total_elements = all_scores.numel()
+            
+            if strategy == "fisher_least":
+                k = max(1, int(top_k * total_elements))
+                threshold = torch.kthvalue(all_scores, k).values
+                compare = lambda x: x <= threshold
+            elif strategy == "fisher_most":
+                k = max(1, int((1 - top_k) * total_elements))
+                threshold = torch.kthvalue(all_scores, k).values
+                compare = lambda x: x >= threshold
+            elif strategy == "fisher_left_only":
+                # New strategy: only parameters on the left side of distribution (least important)
+                # This sets mask to 1 ONLY for the leftmost top_k fraction of Fisher values
+                k = max(1, int(top_k * total_elements))
+                threshold = torch.kthvalue(all_scores, k).values
+                compare = lambda x: x <= threshold
+            else:
+                raise ValueError(f"Unknown Fisher strategy: {strategy}")
+            
+            mask = {name: compare(tensor).float() for name, tensor in fisher_info.items()}
+
+        elif strategy in {"magnitude_lowest", "magnitude_highest"}:
+            all_params = torch.cat([p.view(-1).abs() for p in fisher_info.values()])
+            total_elements = all_params.numel()
+            
+            if strategy == "magnitude_lowest":
+                k = max(1, int(top_k * total_elements))
+                threshold = torch.kthvalue(all_params, k).values
+                compare = lambda x: x.abs() <= threshold
+            else:
+                k = max(1, int((1 - top_k) * total_elements))
+                threshold = torch.kthvalue(all_params, k).values
+                compare = lambda x: x.abs() >= threshold
+            mask = {name: compare(p).float() for name, p in fisher_info.items()}
+
+        elif strategy == "random":
+            mask = {
+                name: (torch.rand_like(p) < top_k).float()
+                for name, p in fisher_info.items()
+            }
+
+        else:
+            raise ValueError(f"Unknown strategy: {strategy}")
+
+        return mask
     
     def __del__(self):
         """Clean up when the class is deleted."""
