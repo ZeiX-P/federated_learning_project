@@ -860,7 +860,7 @@ config = Configuration(
     project_name="fl_centralized_model_editing",
 )
 
-train_dataloader, val_dataloader = data.get_dataloaders(config.dataset, batch_size=config.batch_size) # Pass batch_size
+train_dataloader, val_dataloader = data.get_dataloaders(config.dataset) # Pass batch_size
 
 '''
 # --- Call with Magnitude Pruning (Example) ---
