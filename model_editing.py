@@ -348,7 +348,100 @@ def compute_fisher_information(model, dataloader, device, loss_fn, num_samples=1
 
     return fisher
 
-def generate_global_mask1(model, top_k: float = 0.2, strategy: str = "fisher_least",
+def generate_global_mask(model, top_k: float = 0.1, strategy: str = "fisher_least",
+                          fisher_info: Optional[dict] = None, quantile_sample_size: int = 1_000_000):
+    """
+    Generates a global mask for model parameters based on importance scores.
+
+    Args:
+        model (nn.Module): The neural network model.
+        top_k (float): Percentage of parameters to keep trainable (0.0 to 1.0).
+        strategy (str): Pruning strategy ("fisher_least", "fisher_least_count", "fisher_most",
+                        "magnitude_lowest", "magnitude_highest", "random").
+        fisher_info (Optional[dict]): Pre-computed Fisher information, required for "fisher" strategies.
+        quantile_sample_size (int): Max number of elements to sample for quantile calculation.
+
+    Returns:
+        tuple:
+            - mask (dict): Dictionary of binary masks (1.0 for trainable, 0.0 for frozen).
+            - all_scores_for_logging (torch.Tensor or None): Sampled importance scores for logging.
+    """
+    all_scores_for_logging = None
+
+    if strategy.startswith("fisher"):
+        if fisher_info is None:
+            raise ValueError("fisher_info must be provided for 'fisher' strategies.")
+        all_scores_list = [f.view(-1) for f in fisher_info.values()]
+    elif strategy.startswith("magnitude"):
+        all_scores_list = [p.data.abs().view(-1) for p in model.parameters() if p.requires_grad]
+    elif strategy == "random":
+        mask = {
+            name: (torch.rand_like(param) < top_k).float()
+            for name, param in model.named_parameters() if param.requires_grad
+        }
+        return mask, None
+    else:
+        raise ValueError(f"Unknown strategy: {strategy}")
+
+    total_elements = sum(s.numel() for s in all_scores_list)
+
+    if total_elements > quantile_sample_size:
+        sampled_scores_list = []
+        for s in all_scores_list:
+            num_to_sample = int(s.numel() / total_elements * quantile_sample_size)
+            if num_to_sample > 0:
+                idx = torch.randperm(s.numel(), device=s.device)[:num_to_sample]
+                sampled_scores_list.append(s[idx])
+        all_scores_for_logging = torch.cat(sampled_scores_list)
+    else:
+        all_scores_for_logging = torch.cat(all_scores_list)
+
+    # Apply thresholding or ranking strategy
+    if strategy in ["fisher_least", "magnitude_lowest"]:
+        threshold = torch.quantile(all_scores_for_logging, top_k)
+        compare = lambda x: x <= threshold
+
+    elif strategy in ["fisher_most", "magnitude_highest"]:
+        threshold = torch.quantile(all_scores_for_logging, 1 - top_k)
+        compare = lambda x: x >= threshold
+
+    elif strategy == "fisher_least_count":
+        # Exact count-based selection of lowest top_k proportion
+        k = int(top_k * all_scores_for_logging.numel())
+        k = max(1, k)
+        _, indices = torch.topk(all_scores_for_logging, k, largest=False)
+        threshold_mask_flat = torch.zeros_like(all_scores_for_logging)
+        threshold_mask_flat[indices] = 1.0
+
+        def compare_tensor(x, current_pointer=[0]):
+            size = x.numel()
+            mask = threshold_mask_flat[current_pointer[0]:current_pointer[0] + size].view_as(x)
+            current_pointer[0] += size
+            return mask
+    else:
+        raise ValueError(f"Unexpected strategy during thresholding: {strategy}")
+
+    # Assign masks to each parameter
+    mask = {}
+    if strategy.startswith("fisher"):
+        source_data = fisher_info
+    elif strategy.startswith("magnitude"):
+        source_data = {name: param.data for name, param in model.named_parameters() if param.requires_grad}
+
+    for name, data_tensor in source_data.items():
+        if data_tensor.numel() > 0:
+            data = data_tensor.abs() if strategy.startswith("magnitude") else data_tensor
+            if strategy == "fisher_least_count":
+                mask[name] = compare_tensor(data).float()
+            else:
+                mask[name] = compare(data).float()
+        else:
+            mask[name] = torch.ones_like(data_tensor).float()
+
+    return mask, all_scores_for_logging
+
+
+def generate_global_mask1(model, top_k: float = -2, strategy: str = "fisher_stddev_left",
                           fisher_info: Optional[dict] = None, quantile_sample_size: int = 1_000_000):
     """
     Generates a global mask for model parameters based on importance scores.
@@ -413,9 +506,18 @@ def generate_global_mask1(model, top_k: float = 0.2, strategy: str = "fisher_lea
         # Keep parameters whose scores are >= threshold
         threshold = torch.quantile(all_scores_for_logging, 1 - top_k)
         compare = lambda x: x >= threshold
+    elif strategy == "fisher_stddev_left":
+        all_scores_for_logging = torch.cat([f.view(-1) for f in fisher_info.values()])
+        mean = all_scores_for_logging.mean()
+        std = all_scores_for_logging.std()
+        threshold = mean + top_k * std  # here, top_k is like -1 for -1σ, -2 for -2σ, etc.
+        compare = lambda x: x <= threshold
+        source_data = fisher_info
     else:
         # This case should ideally be caught earlier, but for safety
         raise ValueError(f"Unexpected strategy during thresholding: {strategy}")
+    
+
 
     # Apply the comparison to the original (full) parameter tensors
     mask = {}
@@ -481,8 +583,8 @@ def train_model_with_mask(
     wandb_save: bool = True,
     fisher_samples: int = 100,
     top_k_mask: float = 0.2, # percentage of parameters to keep trainable (based on strategy)
-    strategy: str = "fisher_least", # Strategy for mask generation
-    quantile_sample_size: int = 1_000_000,
+    strategy: str = "fisher_stddev_left", # Strategy for mask generation
+    quantile_sample_size: int = 1000000,
 ) -> dict:
     """
     Trains a model after applying a mask to freeze/unfreeze parameters based on importance.
@@ -547,7 +649,7 @@ def train_model_with_mask(
 
 
     logging.info(f"Generating global mask with strategy '{strategy}' and top_k_mask={top_k_mask}...")
-    global_mask_for_trainable, all_scores_for_logging = generate_global_mask1(
+    global_mask_for_trainable, all_scores_for_logging = generate_global_mask(
         model=model,
         fisher_info=fisher_info, # Pass fisher_info only if computed
         top_k=top_k_mask,
