@@ -895,7 +895,7 @@ class FederatedLearning:
 
         return fisher_diag
 
-    def compute_fisher_information(model, dataloader, device, loss_fn, num_samples=1000):
+    def compute_fisher_information(self,model, dataloader, device, loss_fn, num_samples=1000):
         model.eval()
         fisher = {}
         for name, param in model.named_parameters():
