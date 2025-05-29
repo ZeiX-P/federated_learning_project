@@ -599,7 +599,7 @@ config = Configuration(
     optimizer_class=torch.optim.SGD,
     loss_function=nn.CrossEntropyLoss(),
     scheduler_class=torch.optim.lr_scheduler.CosineAnnealingLR,
-    epochs=25,
+    epochs=5,
     optimizer_params={"momentum": 0.9, "weight_decay": 5e-4},
     scheduler_params={"T_max": 20},
     project_name="fl_centralized_model_editing",
@@ -613,6 +613,6 @@ res_dict = train_model_with_mask(
     train_loader=train_dataloader,
     val_loader=val_dataloader,
     project_name="fl_centralized_fisher_editing",
-    top_k_mask=0.2,  # keep top 20% least important parameters (freeze bottom 80%)
+    top_k_mask=0.1,  # keep top 20% least important parameters (freeze bottom 80%)
     mask_strategy="fisher_left_only"  # Use the new strategy
 )
