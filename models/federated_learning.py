@@ -823,7 +823,7 @@ class FederatedLearning:
         loss_func = self.config.loss_function
 
         # Training loop
-        for epoch in range(1, self.config.num_epochs + 1):
+        for epoch in range(1, self.config.epochs_per_round + 1):
             model.train()
             running_loss = 0.0
             correct, total = 0, 0
