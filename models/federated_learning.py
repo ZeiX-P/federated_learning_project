@@ -944,7 +944,7 @@ class FederatedLearning:
         return aggregated
 
 
-    def generate_global_mask(fisher_info, top_k: float = 0.2, strategy: str = "fisher_left_only"):
+    def generate_global_mask(self,fisher_info, top_k: float = 0.2, strategy: str = "fisher_left_only"):
         if strategy.startswith("fisher"):
             all_scores = torch.cat([f.view(-1) for f in fisher_info.values()])
             
