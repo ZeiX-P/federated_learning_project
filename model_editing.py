@@ -862,7 +862,7 @@ config = Configuration(
 
 train_dataloader, val_dataloader = data.get_dataloaders(config.dataset, batch_size=config.batch_size) # Pass batch_size
 
-
+'''
 # --- Call with Magnitude Pruning (Example) ---
 logging.info("\n--- Starting run with Magnitude Pruning (Lowest) ---")
 res_dict_magnitude = train_model_with_mask(
@@ -872,11 +872,11 @@ res_dict_magnitude = train_model_with_mask(
     project_name="fl_centralized_magnitude_editing",
     top_k_mask=0.2, # Keep the 20% parameters with LEAST magnitude trainable.
                     # This means 80% with highest magnitude are frozen.
-    strategy="magnitude_lowest",
+    strategy="fisher_stddev_left",
     quantile_sample_size=10_000_000
 )
 logging.info(f"Magnitude Pruning Run Best Accuracy: {res_dict_magnitude['best_accuracy']:.2f}%")
-
+'''
 
 # --- Call with Fisher Pruning (Example) ---
 # It's good practice to re-initialize the model or reload its state if you're running
@@ -912,7 +912,7 @@ res_dict_fisher = train_model_with_mask(
     project_name="fl_centralized_fisher_editing",
     top_k_mask=0.2, # Keep the 20% MOST important parameters trainable.
                     # This means 80% with least Fisher are frozen.
-    strategy="fisher_most",
-    quantile_sample_size=10_000_000
+    strategy="fisher_stddev_left",
+    quantile_sample_size=10000
 )
 logging.info(f"Fisher Pruning Run Best Accuracy: {res_dict_fisher['best_accuracy']:.2f}%")
