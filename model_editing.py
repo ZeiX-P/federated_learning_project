@@ -534,11 +534,12 @@ def train_model_with_mask(
             total += targets.size(0)
             correct += predicted.eq(targets).sum().item()
 
-        if scheduler is not None:
-            scheduler.step()
-
         train_loss = running_loss / total
         train_accuracy = 100.0 * correct / total
+
+        # Move scheduler.step() after optimizer.step() to fix PyTorch warning
+        if scheduler is not None:
+            scheduler.step()
 
         if wandb_log:
             wandb.log({
