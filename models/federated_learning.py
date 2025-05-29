@@ -895,7 +895,7 @@ class FederatedLearning:
 
         return fisher_diag
 
-    def compute_fisher_information(self,model, dataloader, device, loss_fn, num_samples=1000):
+    def compute_fisher_information(self,model, dataloader, loss_fn, num_samples=1000):
         model.eval()
         fisher = {}
         for name, param in model.named_parameters():
@@ -906,7 +906,7 @@ class FederatedLearning:
         for inputs, targets in dataloader:
             if count >= num_samples:
                 break
-            inputs, targets = inputs.to(device), targets.to(device)
+            inputs, targets = inputs.to(self.device), targets.to(self.device)
             model.zero_grad()
             outputs = model(inputs)
             loss = loss_fn(outputs, targets)
