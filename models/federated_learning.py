@@ -922,10 +922,9 @@ class FederatedLearning:
             fisher[name] /= count
 
         # Log Fisher histograms to wandb
-        for name, tensor in fisher.items():
-            wandb.log({
-                f"fisher/{name}_hist": wandb.Histogram(tensor.cpu().flatten().numpy())
-            })
+        all_fisher_values = torch.cat([v.flatten().cpu() for v in fisher.values()])
+        wandb.log({
+            "fisher/all_hist": wandb.Histogram(all_fisher_values)})
 
         return fisher
 
