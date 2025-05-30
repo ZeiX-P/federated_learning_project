@@ -752,7 +752,7 @@ class FederatedLearning:
                 #fisher_named = self.reshape_fisher_to_named(fisher, self.local_models[client])
                 #dict_fisher_scores[client] = fisher_named
 
-                local_mask = self.generate_global_mask(fisher, top_k=0.1)
+                local_mask = self.generate_global_mask(fisher, top_k=0.01)
                 dict_client_masks[client] = local_mask
 
                 wandb.log({
