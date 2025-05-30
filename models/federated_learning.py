@@ -921,6 +921,15 @@ class FederatedLearning:
         for name in fisher:
             fisher[name] /= count
 
+        # Log Fisher histograms to wandb
+        for name, tensor in fisher.items():
+            wandb.log({
+                f"fisher/{name}_hist": wandb.Histogram(tensor.cpu().flatten().numpy())
+            })
+
+        return fisher
+
+
         return fisher
 
     def reshape_fisher_to_named(self, fisher_flat, model):
