@@ -73,8 +73,7 @@ def sweep_train():
             train_loader=train_loader,
             val_loader=val_loader,
             project_name="fl_centralized_baseline",
-            wandb_log=False,
-            wandb_save=False
+            
         )
 
 
