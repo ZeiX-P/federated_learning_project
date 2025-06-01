@@ -13,7 +13,7 @@ if __name__ == "__main__":
     
 
     for param in dino.parameters():
-        param.requires_grad = True
+        param.requires_grad = False
     dino.head = nn.Linear(384, 100)
     config = Configuration(
                           model = dino,
