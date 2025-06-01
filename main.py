@@ -13,7 +13,7 @@ if __name__ == "__main__":
     
 
     for param in dino.parameters():
-        param.requires_grad = False
+        param.requires_grad = True
     dino.head = nn.Linear(384, 100)
     config = Configuration(
                           model = dino,
@@ -27,6 +27,7 @@ if __name__ == "__main__":
                           loss_function=nn.CrossEntropyLoss(),
                           scheduler_class=torch.optim.lr_scheduler.CosineAnnealingLR,
                           epochs=25,
+                          project_name="fl_centralized_baseline",
                           optimizer_params={"momentum": 0.9, "weight_decay": 5e-4},
                           scheduler_params={"T_max": 20})
     
