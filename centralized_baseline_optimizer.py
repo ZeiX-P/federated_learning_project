@@ -39,7 +39,7 @@ def sweep_train():
         # Model setup
         model = timm.create_model('vit_small_patch16_224.dino', pretrained=True)
         for param in model.parameters():
-            param.requires_grad = True
+            param.requires_grad = False
         model.head = nn.Linear(384, 100)
 
         # Create training configuration
