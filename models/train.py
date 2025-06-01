@@ -71,7 +71,7 @@ def train_model(
         assert isinstance(val_loader, DataLoader)
 
     use_wandb = wandb_log or wandb_save
-    if use_wandb:
+    if wandb.run is None and (wandb_log or wandb_save):
         if project_name is None:
             raise ValueError("project_name cannot be None if using wandb.")
 
@@ -151,8 +151,8 @@ def train_model(
                     torch.save(model.state_dict(), model_name)
                     wandb.save(model_name)
 
-    if use_wandb:
-        wandb.finish()
+    #if use_wandb:
+        #wandb.finish()
 
     return {"model": model, "best_accuracy": best_acc}
 
