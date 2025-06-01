@@ -54,7 +54,7 @@ def sweep_train():
             optimizer_class=torch.optim.SGD,
             loss_function=nn.CrossEntropyLoss(),
             scheduler_class=torch.optim.lr_scheduler.CosineAnnealingLR,
-            epochs=25,
+            epochs=10,
             optimizer_params={
                 "momentum": config.momentum,
                 "weight_decay": config.weight_decay
