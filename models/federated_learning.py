@@ -15,7 +15,7 @@ import copy
 import random
 import wandb
 from torch.utils.data import DataLoader, Dataset
-from models.train import train
+
 
 class FederatedLearning:
 
