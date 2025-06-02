@@ -142,7 +142,8 @@ class FederatedLearning:
     def train(self,model, train_loader, val_loader, client, round):
 
         model.train()
-        optimizer = torch.optim.SGD(model.parameters(), lr=self.config.learning_rate)
+        optimizer_params = [p for p in model.parameters() if p.requires_grad]
+        optimizer = torch.optim.SGD(optimizer_params, lr=self.config.learning_rate)
 
         for epoch in range(self.epochs_per_round):
             total_loss = 0
