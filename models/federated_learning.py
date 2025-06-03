@@ -40,6 +40,7 @@ class FederatedLearning:
         self.distribution_type = distribution_type
         self.client_fraction = client_fraction
         self.config = config
+        self.local_steps = 4
 
         if torch.cuda.is_available():
             self.device = torch.device('cuda')
@@ -181,6 +182,59 @@ class FederatedLearning:
                 "round": round
             })
 
+    def train_local_step(self, model, train_loader, val_loader, client, round):
+        model.train()
+        model.to(self.device)
+
+        optimizer_params = [p for p in model.parameters() if p.requires_grad]
+        optimizer = self.config.optimizer_class(
+            optimizer_params,
+            lr=self.config.learning_rate,
+            **self.config.optimizer_params
+        )
+
+        scheduler = None
+        if self.config.scheduler_class:
+            scheduler = self.config.scheduler_class(optimizer, **self.config.scheduler_params)
+
+        loss_func = self.config.loss_function
+        total_loss = 0
+        total_samples = 0
+
+        data_iter = iter(train_loader)
+        for step in range(self.local_steps):  # <-- local steps instead of epochs
+            try:
+                inputs, targets = next(data_iter)
+            except StopIteration:
+                data_iter = iter(train_loader)
+                inputs, targets = next(data_iter)
+
+            inputs, targets = inputs.to(self.device), targets.to(self.device)
+
+            optimizer.zero_grad()
+            outputs = model(inputs)
+            loss = loss_func(outputs, targets)
+            loss.backward()
+            optimizer.step()
+
+            total_loss += loss.item() * targets.size(0)
+            total_samples += targets.size(0)
+
+            if scheduler:
+                scheduler.step()
+
+        avg_loss = total_loss / total_samples if total_samples > 0 else 0.0
+        val_loss, val_accuracy = self.evaluate_model(model, val_loader)
+
+        
+        wandb.log({
+            f"client_{client}/train_loss": avg_loss,
+            f"client_{client}/val_loss": val_loss,
+            f"client_{client}/val_accuracy": val_accuracy,
+            "local_step": self.local_steps,
+            "round": round
+        })
+
 
     def aggregate(self):
         wandb.log({"status": "aggregating"})
@@ -193,6 +247,8 @@ class FederatedLearning:
         else:
             raise ValueError(f"Unknown aggregation method: {self.aggregation_method}")
         wandb.log({"status": "aggregation_complete"})
+
+
 
     def federated_averaging1(self):
         # Average only trainable (requires_grad=True) parameters
@@ -210,6 +266,25 @@ class FederatedLearning:
         self.global_model.load_state_dict(state_dict)
         for client_id in range(self.num_clients):
             self.local_models[client_id].load_state_dict(copy.deepcopy(self.global_model.state_dict()))
+
+    def federated_averaging2(self):
+    # Start with a copy of the first local model's state_dict
+        avg_weights = copy.deepcopy(self.local_models[0].state_dict())
+
+        for key in avg_weights:
+            # Stack and average weights across all client models
+            avg_weights[key] = torch.stack(
+                [client.state_dict()[key].float() for client in self.local_models.values()],
+                dim=0
+            ).mean(dim=0)
+
+        # Load averaged weights into global model
+        self.global_model.load_state_dict(avg_weights)
+
+        # Copy global model weights back to all local models
+        for client_id in range(self.num_clients):
+            self.local_models[client_id].load_state_dict(copy.deepcopy(self.global_model.state_dict()))
+
 
     def federated_averaging(self):
         client_weights = [client_model.state_dict() for client_model in self.local_models.values()]
@@ -401,7 +476,7 @@ class FederatedLearning:
                 train_loader = DataLoader(data_client_train_set, batch_size=self.config.batch_size, shuffle=True)
                 val_loader = DataLoader(data_client_val_set, batch_size=self.config.batch_size, shuffle=False)
 
-                self.train(self.local_models[client], train_loader, val_loader, client, round)
+                self.train_local_step(self.local_models[client], train_loader, val_loader, client, round)
 
             self.aggregate()
             global_metrics = self.evaluate_global_model()
