@@ -257,6 +257,32 @@ class FederatedLearning:
         for client_id in range(self.num_clients):
             self.local_models[client_id].load_state_dict(copy.deepcopy(avg_weights))
      
+
+
+    def validate1(self, model, dataloader):
+        model.eval()  # Set model to evaluation mode
+        val_loss = 0.0
+        correct = 0
+        total = 0
+
+        with torch.no_grad():  # No gradients needed for validation
+            for inputs, targets in dataloader:
+                inputs, targets = inputs.to(self.device), targets.to(self.device)
+
+                outputs = model(inputs)
+                loss = self.config.loss_function(outputs, targets)
+                val_loss += loss.item() * inputs.size(0)  # Accumulate loss
+
+                _, predicted = torch.max(outputs, 1)
+                correct += (predicted == targets).sum().item()
+                total += targets.size(0)
+
+        avg_loss = val_loss / total
+        accuracy = correct / total
+
+        return avg_loss, accuracy
+
+
     def validate(self, model, val_loader):
         """Separate validation function for cleaner code."""
         model.eval()
@@ -318,7 +344,7 @@ class FederatedLearning:
         # Create a DataLoader for the entire validation set
         val_loader = DataLoader(self.global_val_set, batch_size=self.config.batch_size, shuffle=False)
         
-        return self.validate(self.global_model, val_loader)
+        return self.validate1(self.global_model, val_loader)
     
     def run_model_editing_global(self):
 
