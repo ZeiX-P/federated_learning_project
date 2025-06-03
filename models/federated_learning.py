@@ -135,7 +135,7 @@ class FederatedLearning:
                 total += targets.size(0)
 
         avg_loss = total_loss / total
-        accuracy = correct / total
+        accuracy = 100* correct / total
         return avg_loss, accuracy
 
 
