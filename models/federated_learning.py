@@ -173,7 +173,7 @@ class FederatedLearning:
     def aggregate(self):
         wandb.log({"status": "aggregating"})
         if self.aggregation_method == 'FedAvg':
-            self.federated_averaging()
+            self.federated_averaging1()
         elif self.aggregation_method == 'FedProx':
             self.federated_proximal()
         elif self.aggregation_method == 'FedNova':
@@ -181,6 +181,28 @@ class FederatedLearning:
         else:
             raise ValueError(f"Unknown aggregation method: {self.aggregation_method}")
         wandb.log({"status": "aggregation_complete"})
+
+    def federated_averaging1(self):
+        client_weights = [client_model.state_dict() for client_model in self.local_models.values()]
+        avg_weights = copy.deepcopy(client_weights[0])
+
+        # Only average parameters that are trainable (e.g., the head)
+        for key in avg_weights:
+            # Skip non-trainable (frozen) parameters
+            if not self.global_model.state_dict()[key].requires_grad:
+                continue
+            
+            avg_weights[key] = torch.stack([client_weights[i][key] for i in range(len(client_weights))], dim=0).mean(dim=0)
+
+        # Load only averaged weights into global model
+        current_state = self.global_model.state_dict()
+        current_state.update(avg_weights)
+        self.global_model.load_state_dict(current_state)
+
+        # Distribute global model to all local models
+        for client_id in range(self.num_clients):
+            self.local_models[client_id].load_state_dict(copy.deepcopy(self.global_model.state_dict()))
+
 
     def federated_averaging(self):
         client_weights = [client_model.state_dict() for client_model in self.local_models.values()]
