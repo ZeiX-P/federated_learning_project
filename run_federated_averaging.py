@@ -27,6 +27,9 @@ if __name__ == "__main__":
         param.requires_grad = False
     dino.head = nn.Linear(384, 100)
 
+    for param in dino.head.parameters():
+        param.requires_grad = True
+
     config1 = Configuration(
                           model = dino,
                           training_name="federated_learning_model_editing_talos",
