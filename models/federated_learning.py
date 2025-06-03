@@ -185,7 +185,7 @@ class FederatedLearning:
     def aggregate(self):
         wandb.log({"status": "aggregating"})
         if self.aggregation_method == 'FedAvg':
-            self.federated_averaging()
+            self.federated_averaging1()
         elif self.aggregation_method == 'FedProx':
             self.federated_proximal()
         elif self.aggregation_method == 'FedNova':
