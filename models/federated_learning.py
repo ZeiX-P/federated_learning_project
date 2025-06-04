@@ -488,16 +488,24 @@ class FederatedLearning:
 
             wandb.log({"active_clients": num_selected_clients, "round": round})
 
-            for client in selected_clients:
-                data_client_train_set = self.dict_train_client_data[client]
-                data_client_val_set = self.dict_val_client_data[client]
+            current_round_trained_models = []
+
+            for client_id in selected_clients:
+         
+                self.local_models[client_id].load_state_dict(copy.deepcopy(self.global_model.state_dict()))
+
+                data_client_train_set = self.dict_train_client_data[client_id]
+                data_client_val_set = self.dict_val_client_data[client_id]
 
                 train_loader = DataLoader(data_client_train_set, batch_size=self.config.batch_size, shuffle=True)
                 val_loader = DataLoader(data_client_val_set, batch_size=self.config.batch_size, shuffle=False)
 
-                self.train_local_step(self.local_models[client], train_loader, val_loader, client, round)
+            
+                self.train_local_step(self.local_models[client_id], train_loader, val_loader, client_id, round)
 
-            self.aggregate(self.global_model, selected_clients)
+                current_round_trained_models.append(self.local_models[client_id])
+
+            self.aggregate(self.global_model, current_round_trained_models)
             global_metrics = self.evaluate_global_model()
 
             wandb.log({
