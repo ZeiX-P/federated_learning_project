@@ -236,10 +236,10 @@ class FederatedLearning:
         })
 
 
-    def aggregate(self):
+    def aggregate(self,selected_clients):
         wandb.log({"status": "aggregating"})
         if self.aggregation_method == 'FedAvg':
-            self.federated_averaging1()
+            self.federated_averagingG(selected_clients)
         elif self.aggregation_method == 'FedProx':
             self.federated_proximal()
         elif self.aggregation_method == 'FedNova':
@@ -247,6 +247,25 @@ class FederatedLearning:
         else:
             raise ValueError(f"Unknown aggregation method: {self.aggregation_method}")
         wandb.log({"status": "aggregation_complete"})
+
+    def federated_averagingG(global_model: torch.nn.Module, client_models_for_aggregation):
+    
+        if not client_models_for_aggregation:
+            print("Warning: No client models to aggregate in this round. Global model remains unchanged.")
+            return
+
+        avg_weights = copy.deepcopy(client_models_for_aggregation[0].state_dict())
+
+        for key in avg_weights:
+     
+            if not client_models_for_aggregation[0].state_dict()[key].requires_grad:
+                continue
+
+            avg_weights[key] = torch.stack(
+                [client_model.state_dict()[key] for client_model in client_models_for_aggregation]
+            ).mean(dim=0)
+
+        global_model.load_state_dict(avg_weights)
 
 
 
@@ -478,7 +497,7 @@ class FederatedLearning:
 
                 self.train_local_step(self.local_models[client], train_loader, val_loader, client, round)
 
-            self.aggregate()
+            self.aggregate(selected_clients)
             global_metrics = self.evaluate_global_model()
 
             wandb.log({
