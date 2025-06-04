@@ -248,7 +248,7 @@ class FederatedLearning:
             raise ValueError(f"Unknown aggregation method: {self.aggregation_method}")
         wandb.log({"status": "aggregation_complete"})
 
-    def federated_averagingG(global_model: torch.nn.Module, client_models_for_aggregation):
+    def federated_averagingG(self,global_model: torch.nn.Module, client_models_for_aggregation):
     
         if not client_models_for_aggregation:
             print("Warning: No client models to aggregate in this round. Global model remains unchanged.")
