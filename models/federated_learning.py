@@ -236,10 +236,10 @@ class FederatedLearning:
         })
 
 
-    def aggregate(self,selected_clients):
+    def aggregate(self,global_model, selected_clients):
         wandb.log({"status": "aggregating"})
         if self.aggregation_method == 'FedAvg':
-            self.federated_averagingG(selected_clients)
+            self.federated_averagingG(global_model, selected_clients)
         elif self.aggregation_method == 'FedProx':
             self.federated_proximal()
         elif self.aggregation_method == 'FedNova':
@@ -497,7 +497,7 @@ class FederatedLearning:
 
                 self.train_local_step(self.local_models[client], train_loader, val_loader, client, round)
 
-            self.aggregate(selected_clients)
+            self.aggregate(self.global_model, selected_clients)
             global_metrics = self.evaluate_global_model()
 
             wandb.log({
