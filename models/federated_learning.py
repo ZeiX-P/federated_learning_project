@@ -15,7 +15,7 @@ import copy
 import random
 import wandb
 from torch.utils.data import DataLoader, Dataset
-
+import logging
 
 class FederatedLearning:
 
@@ -169,9 +169,11 @@ class FederatedLearning:
                 loss.backward()
 
                 optimizer.step()
-                total_loss += loss.item() * targets.size(0)
+                total_loss += loss.item() 
             if scheduler is not None:
+
                 scheduler.step()
+                logging.info(f"Scheduler step for client {client} at round {round}, epoch {epoch}")
             # Optional: evaluate on validation set
             val_loss, val_accuracy = self.evaluate_model(model, val_loader)
 
