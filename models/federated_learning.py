@@ -239,7 +239,7 @@ class FederatedLearning:
     def aggregate(self,global_model, selected_clients):
         wandb.log({"status": "aggregating"})
         if self.aggregation_method == 'FedAvg':
-            self.federated_averagingG(global_model, selected_clients)
+            self.federated_averagingF(global_model, selected_clients)
         elif self.aggregation_method == 'FedProx':
             self.federated_proximal()
         elif self.aggregation_method == 'FedNova':
@@ -247,6 +247,30 @@ class FederatedLearning:
         else:
             raise ValueError(f"Unknown aggregation method: {self.aggregation_method}")
         wandb.log({"status": "aggregation_complete"})
+
+    def federated_averagingF(
+    global_model: torch.nn.Module, client_models
+) -> torch.nn.Module:
+
+        global_dict = global_model.state_dict()
+
+        for key in global_dict:
+            # Compute the average of the corresponding parameter across all client models
+            global_dict[key] = torch.mean(
+                torch.stack(
+                    [
+                        client_model.state_dict()[key].float()
+                        for client_model in client_models
+                    ],
+                    dim=0,
+                ),
+                dim=0,
+            )
+
+        # Load the averaged weights into the global model
+        global_model.load_state_dict(global_dict)
+
+        return global_model
 
     def federated_averagingG(self,global_model: torch.nn.Module, client_models_for_aggregation):
     
@@ -489,11 +513,12 @@ class FederatedLearning:
             wandb.log({"active_clients": num_selected_clients, "round": round})
 
             current_round_trained_models = []
+            local_models = []
 
             for client_id in selected_clients:
          
-                self.local_models[client_id].load_state_dict(copy.deepcopy(self.global_model.state_dict()))
-
+                #self.local_models[client_id].load_state_dict(copy.deepcopy(self.global_model.state_dict()))
+                local_model = copy.deepcopy(self.global_model)
                 data_client_train_set = self.dict_train_client_data[client_id]
                 data_client_val_set = self.dict_val_client_data[client_id]
 
@@ -506,7 +531,8 @@ class FederatedLearning:
 
                 current_round_trained_models.append(self.local_models[client_id])
 
-            self.aggregate(self.global_model, current_round_trained_models)
+            #self.aggregate(self.global_model, current_round_trained_models)
+            self.aggregate(self.global_model, local_models)
             global_metrics = self.evaluate_global_model()
 
             wandb.log({
