@@ -151,11 +151,11 @@ class FederatedLearning:
             lr=self.config.learning_rate,
             **self.config.optimizer_params
         )
-
+        optimizer1 = torch.optim.SGD(optimizer_params, lr=0.01, momentum=0.9, weight_decay=1e-4)
         scheduler = None
         #if self.config.scheduler_class:
             #scheduler = self.config.scheduler_class(optimizer, **self.config.scheduler_params)
-        scheduler1 = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
+        scheduler1 = torch.optim.lr_scheduler.StepLR(optimizer1, step_size=10, gamma=0.1)
         loss_func = self.config.loss_function
 
         for epoch in range(self.epochs_per_round):
@@ -163,12 +163,12 @@ class FederatedLearning:
             for inputs, targets in train_loader:
                 inputs, targets = inputs.to(self.device), targets.to(self.device)
 
-                optimizer.zero_grad()
+                optimizer1.zero_grad()
                 outputs = model(inputs)
                 loss = self.config.loss_function(outputs, targets)
                 loss.backward()
 
-                optimizer.step()
+                optimizer1.step()
                 total_loss += loss.item() 
             if scheduler1 is not None:
 
