@@ -221,7 +221,7 @@ class FederatedLearning:
             loss.backward()
             optimizer1.step()
 
-            total_loss += loss.item() * targets.size(0)
+            total_loss += loss.item() 
             total_samples += targets.size(0)
 
             if scheduler1:
