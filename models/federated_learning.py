@@ -527,9 +527,10 @@ class FederatedLearning:
 
             
                 #self.train_local_step(self.local_models[client_id], train_loader, val_loader, client_id, round)
-                self.train(self.local_models[client_id], train_loader, val_loader, client_id, round)
+                self.train(local_models, train_loader, val_loader, client_id, round)
 
-                current_round_trained_models.append(self.local_models[client_id])
+                #current_round_trained_models.append(self.local_models[client_id])
+                local_models.append(local_model)
 
             #self.aggregate(self.global_model, current_round_trained_models)
             self.aggregate(self.global_model, local_models)
