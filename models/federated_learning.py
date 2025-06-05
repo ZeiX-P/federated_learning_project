@@ -153,9 +153,9 @@ class FederatedLearning:
         )
 
         scheduler = None
-        if self.config.scheduler_class:
-            scheduler = self.config.scheduler_class(optimizer, **self.config.scheduler_params)
-
+        #if self.config.scheduler_class:
+            #scheduler = self.config.scheduler_class(optimizer, **self.config.scheduler_params)
+        scheduler1 = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
         loss_func = self.config.loss_function
 
         for epoch in range(self.epochs_per_round):
@@ -170,7 +170,7 @@ class FederatedLearning:
 
                 optimizer.step()
                 total_loss += loss.item() 
-            if scheduler is not None:
+            if scheduler1 is not None:
 
                 scheduler.step()
                 logging.info(f"Scheduler step for client {client} at round {round}, epoch {epoch}")
