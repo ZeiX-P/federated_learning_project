@@ -172,7 +172,7 @@ class FederatedLearning:
                 total_loss += loss.item() 
             if scheduler1 is not None:
 
-                scheduler.step()
+                scheduler1.step()
                 logging.info(f"Scheduler step for client {client} at round {round}, epoch {epoch}")
             # Optional: evaluate on validation set
             val_loss, val_accuracy = self.evaluate_model(model, val_loader)
