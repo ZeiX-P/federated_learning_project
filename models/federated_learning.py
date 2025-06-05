@@ -170,7 +170,8 @@ class FederatedLearning:
 
                 optimizer.step()
                 total_loss += loss.item() * targets.size(0)
-
+            if scheduler is not None:
+                scheduler.step()
             # Optional: evaluate on validation set
             val_loss, val_accuracy = self.evaluate_model(model, val_loader)
 
