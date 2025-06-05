@@ -527,7 +527,7 @@ class FederatedLearning:
 
             
                 #self.train_local_step(self.local_models[client_id], train_loader, val_loader, client_id, round)
-                self.train(local_models, train_loader, val_loader, client_id, round)
+                self.train(local_model, train_loader, val_loader, client_id, round)
 
                 #current_round_trained_models.append(self.local_models[client_id])
                 local_models.append(local_model)
