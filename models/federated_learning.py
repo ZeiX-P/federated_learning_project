@@ -107,7 +107,7 @@ class FederatedLearning:
         elif self.distribution_type == 'non-iid-dirichlet':
             indices = self.data.dirichlet_non_iid_split(dataset, num_clients)
 
-        elif self.distribution_type == "non-idd":
+        elif self.distribution_type == "non-iid":
             indices = self.data.non_iid_sharding(dataset, num_clients)
         else:
             raise ValueError(f"Unknown distribution type: {self.distribution_type}")
