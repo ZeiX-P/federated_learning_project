@@ -104,8 +104,11 @@ class FederatedLearning:
     def split_data_to_client(self, dataset: Dataset, num_clients):
         if self.distribution_type == 'iid':
             indices = self.data.idd_split(dataset, num_clients)
-        elif self.distribution_type == 'non-iid':
+        elif self.distribution_type == 'non-iid-dirichlet':
             indices = self.data.dirichlet_non_iid_split(dataset, num_clients)
+
+        elif self.distribution_type == "non-idd":
+            indices = self.data.non_iid_sharding(dataset, num_clients)
         else:
             raise ValueError(f"Unknown distribution type: {self.distribution_type}")
         return indices

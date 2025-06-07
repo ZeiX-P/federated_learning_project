@@ -1,4 +1,5 @@
 
+from collections import defaultdict
 import torch
 import torchvision
 import torchvision.transforms as transforms
@@ -153,5 +154,66 @@ class Dataset:
                 client_data[client_id].extend(split)
 
         return client_data
+    
+    def non_iid_sharding(self,
+    dataset: Dataset,
+    num_clients: int,
+    seed: Optional[int] = 42,
+) -> Dict[int, List[int]]:
+        """
+        Split the dataset into non-i.i.d. shards.
+
+        Each client receives samples from exactly `num_classes` classes.
+
+        Args:
+            dataset (Dataset): Dataset to be split.
+            num_clients (int): Number of clients.
+            num_classes (int): Number of classes per client.
+            seed (Optional[int]): Random seed.
+
+        Returns:
+            Dict[int, List[int]]: Mapping client ID to list of sample indices.
+        """
+        client_data = defaultdict(list)
+        class_indices = defaultdict(list)
+        num_classes = 10
+        # Group sample indices by class
+        for idx, (_, label) in enumerate(dataset):
+            class_indices[label].append(idx)
+
+        all_classes = list(class_indices.keys())
+        total_classes = len(all_classes)
+
+        if num_classes > total_classes:
+            raise ValueError(
+                f"Requested {num_classes} classes per client, "
+                f"but dataset only has {total_classes} classes."
+            )
+
+        if num_clients * num_classes > total_classes * len(class_indices[0]):
+            print("Warning: There may be overlapping class assignments among clients.")
+
+        rng = np.random.default_rng(seed)
+
+        # Shuffle class list for randomness
+        rng.shuffle(all_classes)
+
+        # Assign classes to clients
+        class_pool = all_classes.copy()
+        for client_id in range(num_clients):
+            if len(class_pool) < num_classes:
+                class_pool = all_classes.copy()
+                rng.shuffle(class_pool)
+            selected_classes = class_pool[:num_classes]
+            class_pool = class_pool[num_classes:]
+
+            # Assign samples from selected classes
+            for cls in selected_classes:
+                samples = class_indices[cls]
+                rng.shuffle(samples)
+                client_data[client_id].extend(samples)
+
+        return dict(client_data)
+
 
     
