@@ -5,9 +5,15 @@ from models.federated_learning import FederatedLearning
 import timm
 import torch
 import torch.nn as nn
-
+import logging
 
 if __name__ == "__main__":
+
+    logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler()]
+)
 
     data = Dataset()
     '''
