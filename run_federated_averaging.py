@@ -40,7 +40,7 @@ if __name__ == "__main__":
                           model = dino,
                           training_name="federated_learning_model_editing_talos",
                           batch_size=64,
-                          learning_rate=5e-4,
+                          learning_rate=0.01,
                           momentum=0.9,
                           weight_decay=5e-4,
                           dataset="CIFAR100",
