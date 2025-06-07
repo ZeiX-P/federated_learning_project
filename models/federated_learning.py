@@ -232,7 +232,7 @@ class FederatedLearning:
         # Create comparison optimizer for debugging
         optimizer1 = torch.optim.SGD(optimizer_params, lr=0.01, momentum=0.9, weight_decay=1e-4)
         
-        # Initialize scheduler with detailed logging
+        print("ciao")
         scheduler = None
         if self.config.scheduler_class:
             try:
@@ -296,7 +296,7 @@ class FederatedLearning:
                 loss.backward()
 
                 # : You're using optimizer1.step() but optimizer.zero_grad() - this might be intentional for debugging
-                optimizer1.step()  # Consider changing to optimizer.step() for production
+                optimizer.step()  # Consider changing to optimizer.step() for production
                 total_loss += loss.item()
                 batch_count += 1
             
