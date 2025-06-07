@@ -185,107 +185,59 @@ class FederatedLearning:
                 "round": round
             })
 
+    
+
+
     def train1(self, model, train_loader, val_loader, client, round):
         print(f"🧪 SIMPLE PRINT TEST - Client {client}, Round {round}")
         logging.info(f"🧪 LOGGING TEST - Client {client}, Round {round}")
+        
         model.train()
         optimizer_params = [p for p in model.parameters() if p.requires_grad]
         
-        # Log basic info
-        wandb.log({
-            f"client_{client}/model_parameters_count": len(optimizer_params),
-            f"client_{client}/trainable_parameters": sum(p.numel() for p in optimizer_params),
-            "round": round
-        })
-        
-        # Initialize optimizer with detailed logging
+        # Initialize optimizer with logging
         try:
             optimizer = self.config.optimizer_class(
                 optimizer_params,
                 lr=self.config.learning_rate,
                 **self.config.optimizer_params
             )
-            
-            # Log successful optimizer initialization
-            wandb.log({
-                f"client_{client}/optimizer_initialized": True,
-                f"client_{client}/optimizer_class": str(self.config.optimizer_class.__name__),
-                f"client_{client}/optimizer_lr": self.config.learning_rate,
-                f"client_{client}/optimizer_params": str(self.config.optimizer_params),
-                "round": round
-            })
-            
-            logging.info(f" Optimizer initialized successfully for client {client}")
-            logging.info(f"   Class: {self.config.optimizer_class.__name__}")
-            logging.info(f"   LR: {self.config.learning_rate}")
-            logging.info(f"   Params: {self.config.optimizer_params}")
+            logging.info(f"✅ Optimizer initialized for client {client}: {self.config.optimizer_class.__name__}")
+            print(f"✅ Optimizer initialized for client {client}: {self.config.optimizer_class.__name__}")
             
         except Exception as e:
-            wandb.log({
-                f"client_{client}/optimizer_initialized": False,
-                f"client_{client}/optimizer_error": str(e),
-                "round": round
-            })
-            logging.error(f" Optimizer initialization failed for client {client}: {e}")
+            logging.error(f"❌ Optimizer failed for client {client}: {e}")
+            print(f"❌ Optimizer failed for client {client}: {e}")
             raise e
         
-        # Create comparison optimizer for debugging
-        optimizer1 = torch.optim.SGD(optimizer_params, lr=0.01, momentum=0.9, weight_decay=1e-4)
-        
-        print("ciao")
+        # Initialize scheduler with logging
         scheduler = None
         if self.config.scheduler_class:
             try:
                 scheduler = self.config.scheduler_class(optimizer, **self.config.scheduler_params)
-                
-                # Log successful scheduler initialization
-                wandb.log({
-                    f"client_{client}/scheduler_initialized": True,
-                    f"client_{client}/scheduler_class": str(self.config.scheduler_class.__name__),
-                    f"client_{client}/scheduler_params": str(self.config.scheduler_params),
-                    "round": round
-                })
-                
-                logging.info(f" Scheduler initialized successfully for client {client}")
-                logging.info(f"   Class: {self.config.scheduler_class.__name__}")
-                logging.info(f"   Params: {self.config.scheduler_params}")
+                logging.info(f"✅ Scheduler initialized for client {client}: {self.config.scheduler_class.__name__}")
+                print(f"✅ Scheduler initialized for client {client}: {self.config.scheduler_class.__name__}")
                 
             except Exception as e:
-                wandb.log({
-                    f"client_{client}/scheduler_initialized": False,
-                    f"client_{client}/scheduler_error": str(e),
-                    "round": round
-                })
-                logging.error(f"Scheduler initialization failed for client {client}: {e}")
+                logging.error(f"❌ Scheduler failed for client {client}: {e}")
+                print(f"❌ Scheduler failed for client {client}: {e}")
                 scheduler = None
         else:
-            wandb.log({
-                f"client_{client}/scheduler_initialized": False,
-                f"client_{client}/scheduler_reason": "No scheduler class provided",
-                "round": round
-            })
-            logging.info(f" No scheduler configured for client {client}")
+            logging.info(f"ℹ️ No scheduler configured for client {client}")
+            print(f"ℹ️ No scheduler configured for client {client}")
+        
+        # Remove the duplicate optimizer1 for now - use only the config-based one
+        # optimizer1 = torch.optim.SGD(optimizer_params, lr=0.01, momentum=0.9, weight_decay=1e-4)
         
         loss_func = self.config.loss_function
-        
-        # Log initial learning rates
-        initial_lr = optimizer.param_groups[0]['lr']
-        wandb.log({
-            f"client_{client}/initial_lr": initial_lr,
-            "round": round
-        })
         
         for epoch in range(self.epochs_per_round):
             total_loss = 0
             batch_count = 0
             
-            # Log current learning rate at start of epoch
+            # Log initial LR for this epoch
             current_lr = optimizer.param_groups[0]['lr']
-            wandb.log({
-                f"client_{client}/current_lr_epoch_{epoch}": current_lr,
-                "epoch": epoch,
-                "round": round
-            })
+            print(f"Epoch {epoch} starting LR: {current_lr:.6f}")
             
             for inputs, targets in train_loader:
                 inputs, targets = inputs.to(self.device), targets.to(self.device)
@@ -295,74 +247,41 @@ class FederatedLearning:
                 loss = self.config.loss_function(outputs, targets)
                 loss.backward()
 
-                # : You're using optimizer1.step() but optimizer.zero_grad() - this might be intentional for debugging
-                optimizer.step()  # Consider changing to optimizer.step() for production
+                # FIXED: Use the same optimizer for both zero_grad and step
+                optimizer.step()  # Changed from optimizer1.step()
+                
                 total_loss += loss.item()
                 batch_count += 1
             
-            # Calculate average loss for the epoch
+            # Calculate average loss
             avg_epoch_loss = total_loss / batch_count if batch_count > 0 else 0
             
-            # Handle scheduler step with logging
+            # Handle scheduler step AFTER optimizer steps are done
             if scheduler is not None:
-                try:
-                    # Log LR before scheduler step
-                    lr_before = optimizer.param_groups[0]['lr']
-                    
-                    scheduler.step()
-                    
-                    # Log LR after scheduler step
-                    lr_after = optimizer.param_groups[0]['lr']
-                    
-                    wandb.log({
-                        f"client_{client}/scheduler_step_executed": True,
-                        f"client_{client}/lr_before_scheduler": lr_before,
-                        f"client_{client}/lr_after_scheduler": lr_after,
-                        f"client_{client}/lr_change": lr_after - lr_before,
-                        "epoch": epoch,
-                        "round": round
-                    })
-                    
-                    logging.info(f" Scheduler step executed for client {client} at round {round}, epoch {epoch}")
-                    logging.info(f"   LR changed from {lr_before:.6f} to {lr_after:.6f}")
-                    
-                except Exception as e:
-                    wandb.log({
-                        f"client_{client}/scheduler_step_executed": False,
-                        f"client_{client}/scheduler_step_error": str(e),
-                        "epoch": epoch,
-                        "round": round
-                    })
-                    logging.error(f" Scheduler step failed for client {client}: {e}")
+                lr_before = optimizer.param_groups[0]['lr']
+                scheduler.step()
+                lr_after = optimizer.param_groups[0]['lr']
+                
+                print(f"Scheduler stepped: {lr_before:.6f} → {lr_after:.6f}")
+                logging.info(f"Client {client} Epoch {epoch}: LR {lr_before:.6f} → {lr_after:.6f}")
             
-            # Optional: evaluate on validation set
+            # Evaluate model
             val_loss, val_accuracy = self.evaluate_model(model, val_loader)
 
-            # Log training/validation metrics
+            # Log to wandb
             wandb.log({
                 f"client_{client}/train_loss": avg_epoch_loss,
                 f"client_{client}/val_loss": val_loss,
                 f"client_{client}/val_accuracy": val_accuracy,
-                f"client_{client}/final_lr_epoch_{epoch}": optimizer.param_groups[0]['lr'],
+                f"client_{client}/learning_rate": optimizer.param_groups[0]['lr'],
                 "epoch": epoch,
                 "round": round
             })
             
-            logging.info(f"Client {client}, Round {round}, Epoch {epoch}: "
-                        f"Train Loss: {avg_epoch_loss:.4f}, Val Loss: {val_loss:.4f}, "
-                        f"Val Acc: {val_accuracy:.4f}, LR: {optimizer.param_groups[0]['lr']:.6f}")
-        
-        # Final summary logging
-        final_lr = optimizer.param_groups[0]['lr']
-        wandb.log({
-            f"client_{client}/training_completed": True,
-            f"client_{client}/final_lr": final_lr,
-            f"client_{client}/lr_change_total": final_lr - initial_lr,
-            "round": round
-        })
-        
-        logging.info(f" Training completed for client {client} at round {round}")
-        logging.info(f"   Final LR: {final_lr:.6f} (change: {final_lr - initial_lr:.6f})")
+            print(f"Client {client}, Epoch {epoch}: Loss={avg_epoch_loss:.4f}, Val_Acc={val_accuracy:.4f}, LR={optimizer.param_groups[0]['lr']:.6f}")
+
+        logging.info(f"🎉 Training completed for client {client}")
+        print(f"🎉 Training completed for client {client}")
 
     def train_local_step(self, model, train_loader, val_loader, client, round):
         model.train()
