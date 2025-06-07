@@ -186,6 +186,8 @@ class FederatedLearning:
             })
 
     def train1(self, model, train_loader, val_loader, client, round):
+        print(f"🧪 SIMPLE PRINT TEST - Client {client}, Round {round}")
+        logging.info(f"🧪 LOGGING TEST - Client {client}, Round {round}")
         model.train()
         optimizer_params = [p for p in model.parameters() if p.requires_grad]
         
