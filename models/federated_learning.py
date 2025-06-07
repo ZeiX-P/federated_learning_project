@@ -142,6 +142,13 @@ class FederatedLearning:
 
     def train(self,model, train_loader, val_loader, client, round):
 
+        logging.info(f"Client {client}, Round {round}: Using optimizer = {self.config.optimizer_class.__name__}")
+        logging.info(f"Optimizer params = {self.config.optimizer_params}")
+        logging.info(f"Learning rate = {self.config.learning_rate}")
+        if self.config.scheduler_class:
+            logging.info(f"Using scheduler = {self.config.scheduler_class.__name__}")
+            logging.info(f"Scheduler params = {self.config.scheduler_params}")
+
         model.train()
         optimizer_params = [p for p in model.parameters() if p.requires_grad]
         #optimizer = torch.optim.SGD(optimizer_params, lr=self.config.learning_rate)
@@ -168,7 +175,7 @@ class FederatedLearning:
                 loss = self.config.loss_function(outputs, targets)
                 loss.backward()
 
-                optimizer1.step()
+                optimizer.step()
                 total_loss += loss.item() 
             if scheduler is not None:
 
@@ -629,7 +636,7 @@ class FederatedLearning:
 
             
                 #self.train_local_step(self.local_models[client_id], train_loader, val_loader, client_id, round)
-                self.train1(local_model, train_loader, val_loader, client_id, round)
+                self.train(local_model, train_loader, val_loader, client_id, round)
 
                 #current_round_trained_models.append(self.local_models[client_id])
                 local_models.append(local_model)
