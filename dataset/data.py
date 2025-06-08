@@ -216,4 +216,80 @@ class Dataset:
         return dict(client_data)
 
 
+
+    def non_iid_split_by_class_dataset(dataset: Dataset, num_clients: int, num_classes_per_client: int = 2):
+   
+    
+        try:
+            dataset_labels = np.array(dataset.targets)
+        except AttributeError:
+            # Fallback for datasets where targets might be in a different attribute
+            # or require iterating. You might need to customize this part.
+            print("Warning: Dataset does not have a '.targets' attribute. "
+                "Attempting to infer labels. Please ensure this is correct for your dataset.")
+            # This is a placeholder; for a custom dataset, you might need
+            # to pass labels explicitly or implement a different way to extract them.
+            dataset_labels = np.array([dataset[i][1] for i in range(len(dataset))]) # Assumes (data, label) tuple
+
+        total_samples = len(dataset_labels)
+        unique_classes = np.unique(dataset_labels)
+        num_total_classes = len(unique_classes)
+
+        if num_classes_per_client > num_total_classes:
+            print(f"Warning: num_classes_per_client ({num_classes_per_client}) is greater than "
+                f"total unique classes ({num_total_classes}). Setting to {num_total_classes}.")
+            num_classes_per_client = num_total_classes
+
+        # Step 1: Group indices by class
+        class_indices = defaultdict(list)
+        for i, label in enumerate(dataset_labels):
+            class_indices[label].append(i)
+
+        # Step 2: Distribute classes to clients
+        client_data_indices = defaultdict(list)
+        
+        # Shuffle unique classes to ensure a more random initial assignment
+        shuffled_classes = np.random.permutation(unique_classes)
+
+        # Distribute classes to clients in a round-robin fashion, ensuring non-IID
+        class_idx_pointer = 0
+        for client_id in range(num_clients):
+            for _ in range(num_classes_per_client):
+                if class_idx_pointer >= num_total_classes:
+                    # If we've run out of classes to assign, cycle back
+                    class_idx_pointer = 0
+                
+                current_class = shuffled_classes[class_idx_pointer]
+                
+                # Add all indices for this class to the current client
+                client_data_indices[client_id].extend(class_indices[current_class])
+                
+                # Remove assigned indices from the global pool to avoid duplicates
+                class_indices[current_class] = [] # Mark as distributed for primary assignment
+                
+                class_idx_pointer += 1
+
+        # Step 3: Handle any remaining data (classes that might not have been fully assigned)
+        remaining_indices = []
+        for cls in unique_classes:
+            remaining_indices.extend(class_indices[cls]) # Collect any left-over indices
+
+        # Distribute remaining indices randomly among clients
+        if remaining_indices:
+            np.random.shuffle(remaining_indices)
+            for i, idx in enumerate(remaining_indices):
+                # Assign remaining indices to clients in a round-robin manner
+                client_id = i % num_clients
+                client_data_indices[client_id].append(idx)
+
+        # Format the output dictionary with 'client_X' keys
+        final_client_splits = {}
+        for i in range(num_clients):
+            # Shuffle indices for each client to mix up order
+            np.random.shuffle(client_data_indices[i])
+            final_client_splits[f'client_{i}'] = client_data_indices[i]
+
+        return final_client_splits
+
+
     
