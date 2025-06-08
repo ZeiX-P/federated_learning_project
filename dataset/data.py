@@ -217,22 +217,260 @@ class Dataset:
 
 
 
-    def non_iid_split_by_class_dataset(self, dataset: Dataset, num_clients: int, num_classes_per_client: int = 2) -> Dict[int, List[int]]:
+    import numpy as np
+from collections import defaultdict
+from torch.utils.data import Dataset, Subset # Import Dataset and Subset
+import torch
+import torchvision
+from torchvision import transforms
+from torch.utils.data import DataLoader, random_split
+from typing import Optional, List, Dict
+import random
+
+class Dataset: # Keeping the class name as 'Dataset' as per your provided code
+    def __init__(self):
+        self.trasform_train = transforms.Compose(
+            [
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomCrop(32, padding=4),
+            transforms.Resize((224,224)),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+            ]
+        )
+        
+        self.trasform_test = transforms.Compose(
+            [
+            transforms.Resize(224),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+            ])
+    
+    def create_train_val_set(self, dataset: Dataset, seed: int = 42):
+        data_size = len(dataset)
+        train_size = int(0.8 * data_size)
+        val_size = data_size - train_size
+        
+        generator = torch.Generator().manual_seed(seed) # Ensure reproducibility
+        trainset, valset = random_split(dataset, [train_size, val_size], generator=generator)
+
+        return trainset, valset 
+
+    def get_dataset(self, dataset_name:str, apply_transform: bool = True) -> tuple[Dataset, Dataset]:
+        dataset_class = getattr(torchvision.datasets, dataset_name)
+
+        if apply_transform:
+            train_set = dataset_class(root='./data', train=True,
+                                        download=True, transform=self.trasform_train)
+            
+            val_set = dataset_class(root='./data', train=False,
+                                        download=True, transform=self.trasform_test)
+        else:
+            train_set = dataset_class(root='./data', train=True,
+                                        download=True, transform=None)
+            
+            val_set = dataset_class(root='./data', train=False,
+                                        download=True, transform=None)
+        return train_set, val_set
+    
+    def get_dataloader(self, dataset: Dataset, indices: Optional[List[int]] = None) -> DataLoader:
+        if indices is not None:
+            dataset = torch.utils.data.Subset(dataset, indices) # Fixed: no _,
+        dataloader = DataLoader(dataset, batch_size=64,
+                                 shuffle=True, num_workers=2)
+        return dataloader
+    
+    def get_dataloaders(self,dataset_name: str):
+        dataset_full, _ = self.get_dataset(dataset_name, apply_transform=True)
+        train_set, val_set = self.create_train_val_set(dataset_full)
+        
+        train_loader = DataLoader(train_set, batch_size=64,
+                                 shuffle=True)
+        
+        val_loader = DataLoader(val_set, batch_size=64,
+                                 shuffle=True)
+        
+        return train_loader, val_loader
+    
+    def create_federated_datasets(self, dataset: Dataset, indices_dict: Dict[int, List[int]]) -> Dict[int, Subset]:
+        federated_datasets: Dict[int, Subset] = {}
+        for client_id, indices in indices_dict.items():
+            federated_datasets[client_id] = torch.utils.data.Subset(dataset, indices)
+        return federated_datasets
+
+    def idd_split(self, dataset: Dataset, num_clients: int) -> Dict[int, List[int]]:
         """
-        Splits a dataset into non-IID subsets based on class labels for Federated Learning.
-        Handles both base Dataset objects and Subset objects.
+        Create a list of indices for each client (IID split).
         Returns: Dict with integer keys.
         """
+        indices_clients = {i:[] for i in range(num_clients)}
+        indices = list(range(len(dataset)))
+        data_per_client = len(dataset) // num_clients
+
+        np.random.shuffle(indices)
+
+        for i in range(num_clients):
+            start_idx = i * data_per_client
+            end_idx = (i + 1) * data_per_client
+            client_indices = indices[start_idx:end_idx]
+            indices_clients[i] = client_indices
+
+        if end_idx < len(dataset):
+            remaining_indices = indices[end_idx:]
+            for i in range(len(remaining_indices)):
+                indices_clients[random.randrange(num_clients)].append(remaining_indices[i])
+        
+        return indices_clients
+
+    def dirichlet_non_iid_split(self, dataset: Dataset, num_clients: int, alpha: float = 0.5, seed: int = 42) -> Dict[int, List[int]]:
+        np.random.seed(seed)
+        client_data = defaultdict(list)
+
         if isinstance(dataset, Subset):
             base_dataset = dataset.dataset
             subset_indices = dataset.indices
             dataset_labels = np.array([base_dataset.targets[i] for i in subset_indices])
-            all_dataset_indices = list(subset_indices)
         else:
             dataset_labels = np.array(dataset.targets)
-            all_dataset_indices = list(range(len(dataset)))
 
-        total_samples = len(all_dataset_indices)
+        class_indices_in_dataset_scope = defaultdict(list)
+        for idx_in_dataset, label in enumerate(dataset_labels):
+            original_data_index = dataset.indices[idx_in_dataset] if isinstance(dataset, Subset) else idx_in_dataset
+            class_indices_in_dataset_scope[label].append(original_data_index)
+
+        labels_classes = np.unique(dataset_labels)
+
+        for label in labels_classes:
+            indices_for_label = class_indices_in_dataset_scope[label]
+            np.random.shuffle(indices_for_label)
+
+            proportions = np.random.dirichlet(alpha=[alpha] * num_clients)
+            proportions = proportions / proportions.sum()
+
+            proportions_cumsum = (np.cumsum(proportions) * len(indices_for_label)).astype(int)
+            proportions_cumsum[-1] = len(indices_for_label)
+
+            current_idx = 0
+            for client_id in range(num_clients):
+                start_idx = current_idx
+                end_idx = proportions_cumsum[client_id]
+                split = indices_for_label[start_idx:end_idx]
+                client_data[client_id].extend(split)
+                current_idx = end_idx
+
+        final_client_splits = {}
+        for i in range(num_clients):
+            np.random.shuffle(client_data[i])
+            final_client_splits[i] = client_data[i]
+
+        return final_client_splits
+    
+    def non_iid_sharding(self,
+        dataset: Dataset,
+        num_clients: int,
+        num_classes: int = 2, # Number of classes assigned to each client initially
+        samples_per_class_shard: int = 10, # Number of samples to take from each class per shard
+        seed: Optional[int] = 42,
+    ) -> Dict[int, List[int]]:
+        """
+        Split the dataset into non-i.i.d. shards.
+        Each client receives `samples_per_class_shard` from `num_classes` classes.
+        Returns: Dict with integer keys.
+        """
+        client_data = defaultdict(list)
+        
+        if isinstance(dataset, Subset):
+            base_dataset = dataset.dataset
+            subset_indices = dataset.indices
+            dataset_labels = np.array([base_dataset.targets[i] for i in subset_indices])
+            all_dataset_original_indices = list(subset_indices)
+        else:
+            dataset_labels = np.array(dataset.targets)
+            all_dataset_original_indices = list(range(len(dataset)))
+
+        all_data_points = [(all_dataset_original_indices[i], label) for i, label in enumerate(dataset_labels)]
+        
+        class_indices_pool = defaultdict(list)
+        for original_idx, label in all_data_points:
+            class_indices_pool[label].append(original_idx)
+        
+        for label in class_indices_pool:
+            random.shuffle(class_indices_pool[label])
+
+        all_classes = list(class_indices_pool.keys())
+        total_classes = len(all_classes)
+
+        if num_classes > total_classes:
+            raise ValueError(
+                f"Requested {num_classes} classes per client, "
+                f"but dataset only has {total_classes} classes."
+            )
+
+        rng = np.random.default_rng(seed)
+        
+        client_turn = 0
+        
+        while True:
+            assigned_this_round = False
+            shuffled_classes_for_round = all_classes.copy()
+            rng.shuffle(shuffled_classes_for_round)
+
+            for cls in shuffled_classes_for_round:
+                if len(class_indices_pool[cls]) > 0:
+                    num_to_take = min(samples_per_class_shard, len(class_indices_pool[cls]))
+                    
+                    if num_to_take > 0:
+                        client_id = client_turn % num_clients
+                        
+                        samples_for_client = class_indices_pool[cls][:num_to_take]
+                        class_indices_pool[cls] = class_indices_pool[cls][num_to_take:]
+                        
+                        client_data[client_id].extend(samples_for_client)
+                        assigned_this_round = True
+                        
+                        client_turn += 1
+            
+            if not assigned_this_round:
+                break
+
+        for i in range(num_clients):
+            random.shuffle(client_data[i])
+
+        return dict(client_data)
+
+    # --- CORRECTED non_iid_split_by_class_dataset ---
+    def non_iid_split_by_class_dataset(self, dataset: Dataset, num_clients: int, num_classes_per_client: int = 2, samples_per_class_shard: int = 10, seed: int = 42) -> Dict[int, List[int]]:
+        """
+        Splits a dataset into non-IID subsets based on class labels for Federated Learning.
+        Ensures all clients receive data by distributing 'shards' of classes.
+
+        Args:
+            dataset (Dataset): The dataset object (e.g., a PyTorch Dataset or Subset) from which
+                               to get labels and indices.
+            num_clients (int): The number of clients to split the data among.
+            num_classes_per_client (int): The number of distinct classes each client will primarily draw from.
+            samples_per_class_shard (int): The number of samples to take from a class each time it's assigned to a client.
+                                            Crucial for ensuring data distribution to many clients.
+            seed (int): Random seed for reproducibility.
+
+        Returns:
+            dict: A dictionary where keys are client IDs (integers)
+                  and values are lists of data indices assigned to that client.
+                  These indices are relative to the *original dataset* if `dataset` is a Subset,
+                  or relative to `dataset` itself if it's a base Dataset.
+        """
+        np.random.seed(seed) # Ensure reproducibility
+
+        # --- Part 1: Extract labels and map original indices ---
+        if isinstance(dataset, Subset):
+            base_dataset = dataset.dataset
+            subset_indices = dataset.indices
+            dataset_labels = np.array([base_dataset.targets[i] for i in subset_indices])
+            all_dataset_original_indices = list(subset_indices) # These are the original indices we will assign
+        else: # Assume it's a base Dataset (e.g., torchvision.datasets.CIFAR10)
+            dataset_labels = np.array(dataset.targets)
+            all_dataset_original_indices = list(range(len(dataset))) # These are the original indices
+
         unique_classes = np.unique(dataset_labels)
         num_total_classes = len(unique_classes)
 
@@ -240,45 +478,90 @@ class Dataset:
             print(f"Warning: num_classes_per_client ({num_classes_per_client}) is greater than "
                   f"total unique classes ({num_total_classes}). Setting to {num_total_classes}.")
             num_classes_per_client = num_total_classes
+            
+        if samples_per_class_shard <= 0:
+            raise ValueError("samples_per_class_shard must be a positive integer.")
 
-        class_indices_map = defaultdict(list)
+        # Create a mutable pool of indices for each class, shuffled
+        class_indices_pool = defaultdict(list)
         for idx_in_labels_array, label in enumerate(dataset_labels):
-            original_data_index = all_dataset_indices[idx_in_labels_array]
-            class_indices_map[label].append(original_data_index)
+            original_data_index = all_dataset_original_indices[idx_in_labels_array]
+            class_indices_pool[label].append(original_data_index)
+        
+        # Shuffle indices within each class initially
+        for label in class_indices_pool:
+            random.shuffle(class_indices_pool[label])
 
+
+        # --- Part 2: Distribute 'shards' of classes to clients ---
         client_data_indices = defaultdict(list)
-        shuffled_classes = np.random.permutation(unique_classes)
+        rng = np.random.default_rng(seed) # Use modern numpy random generator
+        
+        # Maintain a list of clients who still need classes assigned to them
+        clients_needing_classes = list(range(num_clients))
+        rng.shuffle(clients_needing_classes) # Randomize client order
 
-        class_idx_pointer = 0
-        for client_id in range(num_clients): # client_id is already an integer
-            for _ in range(num_classes_per_client):
-                if class_idx_pointer >= num_total_classes:
-                    class_idx_pointer = 0
-                
-                current_class = shuffled_classes[class_idx_pointer]
-                client_data_indices[client_id].extend(class_indices_map[current_class])
-                class_indices_map[current_class] = []
-                
-                class_idx_pointer += 1
+        # Keep track of which class to assign next to ensure rotation
+        class_assignment_pointer = 0
 
-        remaining_indices = []
+        # Loop to assign 'primary' classes to clients
+        while clients_needing_classes and any(len(class_indices_pool[cls]) > 0 for cls in unique_classes):
+            if class_assignment_pointer >= num_total_classes:
+                class_assignment_pointer = 0 # Cycle through classes if needed
+
+            # Take a class to assign
+            current_class = unique_classes[class_assignment_pointer]
+            
+            # If the current class has no samples left, skip it and move to next
+            if not class_indices_pool[current_class]:
+                class_assignment_pointer += 1
+                continue
+
+            # Assign to the next client that still needs classes
+            if clients_needing_classes:
+                client_id = clients_needing_classes.pop(0) # Get next client
+                
+                # Assign a shard of the class to this client
+                num_to_take = min(samples_per_class_shard * num_classes_per_client, len(class_indices_pool[current_class]))
+                if num_to_take > 0:
+                    samples_for_client = class_indices_pool[current_class][:num_to_take]
+                    class_indices_pool[current_class] = class_indices_pool[current_class][num_to_take:]
+                    client_data_indices[client_id].extend(samples_for_client)
+                    
+                    # Add client back if they still need more distinct classes assigned (up to num_classes_per_client)
+                    # This logic is for distributing total classes, not ensuring each client gets num_classes_per_client distinct ones directly
+                    # For simplicity, we just distribute all data this way, and then ensure all clients have something.
+            
+            class_assignment_pointer += 1
+            # If all clients have been assigned a class, reset and reshuffle for next round of distribution
+            if not clients_needing_classes:
+                clients_needing_classes = list(range(num_clients))
+                rng.shuffle(clients_needing_classes)
+
+
+        # --- Part 3: Distribute any remaining data ---
+        # This will ensure all remaining samples are distributed to existing clients.
+        all_remaining_indices = []
         for cls in unique_classes:
-            remaining_indices.extend(class_indices_map[cls])
-
-        if remaining_indices:
-            np.random.shuffle(remaining_indices)
-            for i, idx in enumerate(remaining_indices):
-                client_id = i % num_clients
+            all_remaining_indices.extend(class_indices_pool[cls])
+        
+        if all_remaining_indices:
+            rng.shuffle(all_remaining_indices)
+            for i, idx in enumerate(all_remaining_indices):
+                client_id = i % num_clients # Cycle through clients to distribute remaining
                 client_data_indices[client_id].append(idx)
 
-        # The defaultdict already uses integer keys, convert to dict for final return
-        final_client_splits = {}
+
+        # --- Part 4: Finalize and shuffle client data ---
+        # Ensure all clients have at least an empty list if no data was assigned
         for i in range(num_clients):
-            np.random.shuffle(client_data_indices[i])
-            final_client_splits[i] = client_data_indices[i] # Assign with integer key
+            if i not in client_data_indices:
+                client_data_indices[i] = [] # Ensure all clients have an entry
 
-        return final_client_splits # Returns dict with integer keys
+            # Shuffle the data for each client for randomness
+            random.shuffle(client_data_indices[i])
 
+        return dict(client_data_indices)
 
 
     
