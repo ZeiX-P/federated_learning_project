@@ -4,7 +4,7 @@ import torch
 import torchvision
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader, Dataset, random_split, Subset
-
+import logging
 from typing import List, Tuple, Optional, Dict
 
 import numpy as np
@@ -422,11 +422,10 @@ class Dataset: # Keeping the class name as 'Dataset' as per your provided code
             total_samples = len(dataset)
             original_indices = list(range(total_samples))
         
-        import logging
-        logger = logging.getLogger(__name__)
         
-        logger.info(f"Pathological Non-IID: Splitting {total_samples} samples across {num_clients} clients")
-        logger.info(f"Shards per client: {shards_per_client}")
+        
+        logging.info(f"Pathological Non-IID: Splitting {total_samples} samples across {num_clients} clients")
+        logging.info(f"Shards per client: {shards_per_client}")
         
         # Step 1: Sort data by labels
         # Create (label, original_index) pairs and sort by label
@@ -437,20 +436,20 @@ class Dataset: # Keeping the class name as 'Dataset' as per your provided code
         sorted_indices = [pair[1] for pair in label_index_pairs]
         sorted_labels = [pair[0] for pair in label_index_pairs]
         
-        logger.info(f"Data sorted by labels. Label distribution after sorting:")
+        logging.info(f"Data sorted by labels. Label distribution after sorting:")
         unique_labels, counts = np.unique(sorted_labels, return_counts=True)
         for label, count in zip(unique_labels, counts):
-            logger.info(f"  Label {label}: {count} samples")
+            logging.info(f"  Label {label}: {count} samples")
         
         # Step 2: Calculate shard configuration
         total_shards = num_clients * shards_per_client
         shard_size = total_samples // total_shards
         
         if total_samples % total_shards != 0:
-            logger.warning(f"{total_samples} samples cannot be evenly divided into {total_shards} shards.")
-            logger.warning(f"Using shard size of {shard_size}, leaving {total_samples % total_shards} samples unused.")
+            logging.warning(f"{total_samples} samples cannot be evenly divided into {total_shards} shards.")
+            logging.warning(f"Using shard size of {shard_size}, leaving {total_samples % total_shards} samples unused.")
         
-        logger.info(f"Creating {total_shards} shards of size {shard_size} each")
+        logging.info(f"Creating {total_shards} shards of size {shard_size} each")
         
         # Step 3: Create shards from sorted data
         shards = []
