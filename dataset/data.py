@@ -412,7 +412,54 @@ class Dataset: # Keeping the class name as 'Dataset' as per your provided code
             final_client_splits[i] = client_data[i]
 
         return final_client_splits
+    '''
+    def dirichlet_non_iid_split(self, dataset: Dataset, num_clients: int, alpha: float = 0.5, seed: int = 42) -> Dict[int, List[int]]:
+        np.random.seed(seed)
+        client_data = defaultdict(list)
 
+        if isinstance(dataset, Subset):
+            base_dataset = dataset.dataset
+            subset_indices = dataset.indices
+            dataset_labels = np.array([base_dataset.targets[i] for i in subset_indices])
+            # Map subset indices to original dataset indices
+            index_mapping = {i: subset_indices[i] for i in range(len(subset_indices))}
+        else:
+            dataset_labels = np.array(dataset.targets)
+            index_mapping = {i: i for i in range(len(dataset_labels))}
+
+        class_indices_in_dataset_scope = defaultdict(list)
+        for idx_in_dataset, label in enumerate(dataset_labels):
+            class_indices_in_dataset_scope[label].append(idx_in_dataset)
+
+        labels_classes = np.unique(dataset_labels)
+
+        for label in labels_classes:
+            indices_for_label = class_indices_in_dataset_scope[label]
+            np.random.shuffle(indices_for_label)
+
+            proportions = np.random.dirichlet(alpha=[alpha] * num_clients)
+            proportions = proportions / proportions.sum()
+
+            proportions_cumsum = (np.cumsum(proportions) * len(indices_for_label)).astype(int)
+            proportions_cumsum[-1] = len(indices_for_label)
+
+            current_idx = 0
+            for client_id in range(num_clients):
+                start_idx = current_idx
+                end_idx = proportions_cumsum[client_id]
+                split = indices_for_label[start_idx:end_idx]
+                # Convert to appropriate indices based on dataset type
+                mapped_indices = [index_mapping[idx] for idx in split]
+                client_data[client_id].extend(mapped_indices)
+                current_idx = end_idx
+
+        final_client_splits = {}
+        for i in range(num_clients):
+            np.random.shuffle(client_data[i])
+            final_client_splits[i] = client_data[i]
+
+        return final_client_splits
+    '''
     '''
     def non_iid_sharding(self,
         dataset: Dataset,
