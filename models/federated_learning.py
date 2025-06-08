@@ -93,6 +93,42 @@ class FederatedLearning:
         wandb.watch(self.global_model)
 
     def d(self):
+        full_train_dataset, full_test_dataset = self.data_utils.get_dataset("CIFAR100", apply_transform=True)
+        # ^ Renamed full_val_dataset to full_test_dataset for clarity
+
+        # Split the full training dataset into global train and global val subsets for the server's perspective
+        global_train_set_subset, global_server_val_set_subset = self.data_utils.create_train_val_set(full_train_dataset)
+        # ^ Renamed global_val_set_subset to global_server_val_set_subset to avoid confusion
+
+        # Client training data split from the global training subset
+        dict_train_client_data = self.data_utils.dirichlet_non_iid_split(
+            dataset=global_train_set_subset, # Indices refer to full_train_dataset
+            num_clients=self.num_clients, alpha=0.5
+        )
+
+        # Client validation data split from the *actual full test dataset*
+        # This dataset is NOT a Subset, it's the base CIFAR100 test set
+        dict_val_client_data = self.data_utils.dirichlet_non_iid_split(
+            dataset=full_test_dataset, # Indices refer to full_test_dataset
+            num_clients=self.num_clients, alpha=0.5 # You might want different num_clients/alpha for test clients
+        )
+        # NOTE: If you split the test set for clients, you might not have a single 'global_val_set' anymore.
+        # Or, global_val_set could be the original full_test_dataset.
+
+        # If you go this route, you'd return full_test_dataset as your global_val_set, and ensure
+        # that client_val_subset in FederatedLearning.__init__ correctly uses full_test_dataset as its base.
+        #
+        # For simplicity, let's assume global_server_val_set_subset is what you use for server-side validation,
+        # and full_test_dataset is for clients.
+        #
+        # This setup would change your return value for d() and require adjustment in FL __init__ for base_val_dataset.
+        #
+        # For now, let's stick to the previous interpretation where both train and val come from the train set.
+        # If your intention was this, then the current setup within d() is consistent.
+
+        return global_train_set_subset, global_server_val_set_subset, dict_train_client_data, dict_val_client_data
+    '''
+    def d(self):
         dataset, _ = self.data.get_dataset(self.config.dataset)
         global_train_set, global_val_set = self.data.create_train_val_set(dataset)
         train_indices = self.split_data_to_client(global_train_set, self.num_clients)
@@ -100,7 +136,7 @@ class FederatedLearning:
         dict_train_client_data = self.create_dict_data(global_train_set, train_indices)
         dict_val_client_data = self.create_dict_data(global_val_set, val_indices)
         return global_train_set, global_val_set, dict_train_client_data, dict_val_client_data
-
+    '''
     def split_data_to_client(self, dataset: Dataset, num_clients):
         if self.distribution_type == 'iid':
             indices = self.data.idd_split(dataset, num_clients)
