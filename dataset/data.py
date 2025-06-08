@@ -323,96 +323,129 @@ class Dataset: # Keeping the class name as 'Dataset' as per your provided code
         
         return indices_clients
 
-    def dirichlet_non_iid_split(self, dataset: Dataset, num_clients: int, alpha: float = 0.5, seed: int = 42) -> Dict[int, List[int]]:
-        np.random.seed(seed)
-        client_data = defaultdict(list)
-
-        if isinstance(dataset, Subset):
-            base_dataset = dataset.dataset
-            subset_indices = dataset.indices
-            dataset_labels = np.array([base_dataset.targets[i] for i in subset_indices])
-        else:
-            dataset_labels = np.array(dataset.targets)
-
-        class_indices_in_dataset_scope = defaultdict(list)
-        for idx_in_dataset, label in enumerate(dataset_labels):
-            original_data_index = dataset.indices[idx_in_dataset] if isinstance(dataset, Subset) else idx_in_dataset
-            class_indices_in_dataset_scope[label].append(original_data_index)
-
-        labels_classes = np.unique(dataset_labels)
-
-        for label in labels_classes:
-            indices_for_label = class_indices_in_dataset_scope[label]
-            np.random.shuffle(indices_for_label)
-
-            proportions = np.random.dirichlet(alpha=[alpha] * num_clients)
-            proportions = proportions / proportions.sum()
-
-            proportions_cumsum = (np.cumsum(proportions) * len(indices_for_label)).astype(int)
-            proportions_cumsum[-1] = len(indices_for_label)
-
-            current_idx = 0
-            for client_id in range(num_clients):
-                start_idx = current_idx
-                end_idx = proportions_cumsum[client_id]
-                split = indices_for_label[start_idx:end_idx]
-                client_data[client_id].extend(split)
-                current_idx = end_idx
-
-        final_client_splits = {}
-        for i in range(num_clients):
-            np.random.shuffle(client_data[i])
-            final_client_splits[i] = client_data[i]
-
-        return final_client_splits
     
-
     def dirichlet_non_iid_split(self, dataset: Dataset, num_clients: int, alpha: float = 0.5, seed: int = 42) -> Dict[int, List[int]]:
+    
         np.random.seed(seed)
-        client_data = defaultdict(list)
-
-        if isinstance(dataset, Subset):
+        
+        # Handle both regular Dataset and Subset objects
+        if isinstance(dataset, torch.utils.data.Subset):
+            # This is the case after create_train_val_set
             base_dataset = dataset.dataset
             subset_indices = dataset.indices
-            dataset_labels = np.array([base_dataset.targets[i] for i in subset_indices])
-            # Map subset indices to original dataset indices
-            index_mapping = {i: subset_indices[i] for i in range(len(subset_indices))}
+            # Get labels for the subset
+            labels = np.array([base_dataset.targets[i] for i in subset_indices])
+            total_samples = len(subset_indices)
         else:
-            dataset_labels = np.array(dataset.targets)
-            index_mapping = {i: i for i in range(len(dataset_labels))}
-
-        class_indices_in_dataset_scope = defaultdict(list)
-        for idx_in_dataset, label in enumerate(dataset_labels):
-            class_indices_in_dataset_scope[label].append(idx_in_dataset)
-
-        labels_classes = np.unique(dataset_labels)
-
-        for label in labels_classes:
-            indices_for_label = class_indices_in_dataset_scope[label]
-            np.random.shuffle(indices_for_label)
-
-            proportions = np.random.dirichlet(alpha=[alpha] * num_clients)
+            # Regular dataset
+            labels = np.array(dataset.targets)
+            total_samples = len(dataset)
+        
+        print(f"Splitting {total_samples} samples across {num_clients} clients with alpha={alpha}")
+        
+        # Group sample indices by class
+        class_to_indices = defaultdict(list)
+        for sample_idx, label in enumerate(labels):
+            # sample_idx is 0-based index within our current dataset/subset
+            class_to_indices[label].append(sample_idx)
+        
+        unique_classes = list(class_to_indices.keys())
+        print(f"Found {len(unique_classes)} classes: {unique_classes}")
+        
+        # Initialize client data containers
+        client_indices = {client_id: [] for client_id in range(num_clients)}
+        
+        # Distribute each class across clients using Dirichlet distribution
+        for class_label in unique_classes:
+            class_indices = class_to_indices[class_label]
+            np.random.shuffle(class_indices)
+            
+            # Generate proportions for this class across all clients
+            proportions = np.random.dirichlet([alpha] * num_clients)
+            
+            # Ensure proportions sum to 1
             proportions = proportions / proportions.sum()
-
-            proportions_cumsum = (np.cumsum(proportions) * len(indices_for_label)).astype(int)
-            proportions_cumsum[-1] = len(indices_for_label)
-
-            current_idx = 0
+            
+            # Calculate split points
+            split_lengths = (proportions * len(class_indices)).astype(int)
+            
+            # Adjust for rounding errors - give remaining samples to random clients
+            remaining = len(class_indices) - split_lengths.sum()
+            if remaining > 0:
+                random_clients = np.random.choice(num_clients, remaining, replace=False)
+                for client_id in random_clients:
+                    split_lengths[client_id] += 1
+            
+            # Distribute indices to clients
+            start_idx = 0
             for client_id in range(num_clients):
-                start_idx = current_idx
-                end_idx = proportions_cumsum[client_id]
-                split = indices_for_label[start_idx:end_idx]
-                # Convert to appropriate indices based on dataset type
-                mapped_indices = [index_mapping[idx] for idx in split]
-                client_data[client_id].extend(mapped_indices)
-                current_idx = end_idx
+                end_idx = start_idx + split_lengths[client_id]
+                if end_idx > start_idx:  # Only add if there are samples to add
+                    client_indices[client_id].extend(class_indices[start_idx:end_idx])
+                start_idx = end_idx
+        
+        # Shuffle each client's data and validate
+        for client_id in range(num_clients):
+            if client_indices[client_id]:  # Only shuffle if not empty
+                np.random.shuffle(client_indices[client_id])
+                
+                # Validation - ensure all indices are valid
+                max_idx = max(client_indices[client_id])
+                min_idx = min(client_indices[client_id])
+                
+                if max_idx >= total_samples or min_idx < 0:
+                    raise ValueError(f"Client {client_id} has invalid indices. "
+                                f"Range: [{min_idx}, {max_idx}], Dataset size: {total_samples}")
+        
+        # Print distribution summary
+        for client_id in range(num_clients):
+            print(f"Client {client_id}: {len(client_indices[client_id])} samples")
+        
+        return client_indices
 
-        final_client_splits = {}
-        for i in range(num_clients):
-            np.random.shuffle(client_data[i])
-            final_client_splits[i] = client_data[i]
-
-        return final_client_splits
+# Optional: Add this method to your Dataset class for better debugging
+    def validate_client_data_distribution(self, dict_client_data):
+        """
+        Validate and print information about client data distribution
+        """
+        print("\n=== Client Data Distribution Analysis ===")
+        
+        total_samples = 0
+        class_distribution = defaultdict(lambda: defaultdict(int))
+        
+        for client_id, client_dataset in dict_client_data.items():
+            client_size = len(client_dataset)
+            total_samples += client_size
+            
+            # Analyze class distribution
+            if hasattr(client_dataset, 'indices') and hasattr(client_dataset.dataset, 'targets'):
+                try:
+                    # Get labels for this client's data
+                    indices = client_dataset.indices
+                    if hasattr(client_dataset.dataset, 'dataset'):
+                        # Handle nested Subset (train/val split from original dataset)
+                        base_targets = client_dataset.dataset.dataset.targets
+                        subset_indices = client_dataset.dataset.indices
+                        targets = [base_targets[subset_indices[i]] for i in indices]
+                    else:
+                        targets = [client_dataset.dataset.targets[i] for i in indices]
+                    
+                    # Count classes
+                    for target in targets:
+                        class_distribution[client_id][target] += 1
+                        
+                except Exception as e:
+                    print(f"Could not analyze client {client_id}: {e}")
+        
+        print(f"Total samples distributed: {total_samples}")
+        
+        # Print per-client class distribution
+        for client_id in sorted(class_distribution.keys()):
+            class_counts = class_distribution[client_id]
+            print(f"Client {client_id}: {dict(sorted(class_counts.items()))}")
+        
+        return class_distribution
+    
     '''
     def dirichlet_non_iid_split(self, dataset: Dataset, num_clients: int, alpha: float = 0.5, seed: int = 42) -> Dict[int, List[int]]:
         np.random.seed(seed)
