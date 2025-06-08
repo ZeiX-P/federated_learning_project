@@ -217,33 +217,55 @@ class Dataset:
 
 
 
-    def non_iid_split_by_class_dataset(dataset: Dataset, num_clients: int, num_classes_per_client: int = 2):
-   
-    
-        try:
-            dataset_labels = np.array(dataset.targets)
-        except AttributeError:
-            # Fallback for datasets where targets might be in a different attribute
-            # or require iterating. You might need to customize this part.
-            print("Warning: Dataset does not have a '.targets' attribute. "
-                "Attempting to infer labels. Please ensure this is correct for your dataset.")
-            # This is a placeholder; for a custom dataset, you might need
-            # to pass labels explicitly or implement a different way to extract them.
-            dataset_labels = np.array([dataset[i][1] for i in range(len(dataset))]) # Assumes (data, label) tuple
+    def non_iid_split_by_class_dataset(self, dataset: Dataset, num_clients: int, num_classes_per_client: int = 2):
+        """
+        Splits a dataset into non-IID subsets based on class labels for Federated Learning.
+        Handles both base Dataset objects and Subset objects.
 
-        total_samples = len(dataset_labels)
+        Args:
+            dataset (Dataset): The dataset object (e.g., a PyTorch Dataset or Subset) from which
+                               to get labels and indices.
+            num_clients (int): The number of clients to split the data among.
+            num_classes_per_client (int): The maximum number of distinct classes
+                                          each client will primarily receive data from.
+
+        Returns:
+            dict: A dictionary where keys are client IDs (e.g., 'client_0', 'client_1')
+                  and values are lists of data indices assigned to that client.
+                  These indices are relative to the *original dataset* if `dataset` is a Subset,
+                  or relative to `dataset` itself if it's a base Dataset.
+        """
+        # --- Crucial change here to correctly get labels ---
+        # If it's a Subset, the actual labels are in the base dataset
+        if isinstance(dataset, Subset):
+            base_dataset = dataset.dataset
+            subset_indices = dataset.indices
+            # Get labels corresponding to the subset's indices from the base dataset
+            dataset_labels = np.array([base_dataset.targets[i] for i in subset_indices])
+            # The indices we'll distribute are the `subset_indices` themselves
+            # because they map back to the original dataset.
+            all_dataset_indices = list(subset_indices)
+        else: # Assume it's a base Dataset (e.g., torchvision.datasets.CIFAR10)
+            dataset_labels = np.array(dataset.targets)
+            all_dataset_indices = list(range(len(dataset))) # These are the indices we're working with
+
+        total_samples = len(all_dataset_indices)
         unique_classes = np.unique(dataset_labels)
         num_total_classes = len(unique_classes)
 
         if num_classes_per_client > num_total_classes:
             print(f"Warning: num_classes_per_client ({num_classes_per_client}) is greater than "
-                f"total unique classes ({num_total_classes}). Setting to {num_total_classes}.")
+                  f"total unique classes ({num_total_classes}). Setting to {num_total_classes}.")
             num_classes_per_client = num_total_classes
 
-        # Step 1: Group indices by class
-        class_indices = defaultdict(list)
-        for i, label in enumerate(dataset_labels):
-            class_indices[label].append(i)
+        # Step 1: Group indices (from `all_dataset_indices`) by class
+        # We need to map the labels back to the original indices from `all_dataset_indices`
+        class_indices_map = defaultdict(list)
+        for idx_in_labels_array, label in enumerate(dataset_labels):
+            # The index in dataset_labels corresponds to an index in all_dataset_indices
+            original_data_index = all_dataset_indices[idx_in_labels_array]
+            class_indices_map[label].append(original_data_index)
+
 
         # Step 2: Distribute classes to clients
         client_data_indices = defaultdict(list)
@@ -262,34 +284,33 @@ class Dataset:
                 current_class = shuffled_classes[class_idx_pointer]
                 
                 # Add all indices for this class to the current client
-                client_data_indices[client_id].extend(class_indices[current_class])
+                client_data_indices[client_id].extend(class_indices_map[current_class])
                 
-                # Remove assigned indices from the global pool to avoid duplicates
-                class_indices[current_class] = [] # Mark as distributed for primary assignment
+                # Clear the assigned indices from the map to avoid re-assigning them primarily
+                class_indices_map[current_class] = [] 
                 
                 class_idx_pointer += 1
 
         # Step 3: Handle any remaining data (classes that might not have been fully assigned)
         remaining_indices = []
         for cls in unique_classes:
-            remaining_indices.extend(class_indices[cls]) # Collect any left-over indices
+            remaining_indices.extend(class_indices_map[cls]) # Collect any left-over indices
 
         # Distribute remaining indices randomly among clients
         if remaining_indices:
             np.random.shuffle(remaining_indices)
             for i, idx in enumerate(remaining_indices):
-                # Assign remaining indices to clients in a round-robin manner
                 client_id = i % num_clients
                 client_data_indices[client_id].append(idx)
 
         # Format the output dictionary with 'client_X' keys
         final_client_splits = {}
         for i in range(num_clients):
-            # Shuffle indices for each client to mix up order
             np.random.shuffle(client_data_indices[i])
             final_client_splits[f'client_{i}'] = client_data_indices[i]
 
         return final_client_splits
+
 
 
     
