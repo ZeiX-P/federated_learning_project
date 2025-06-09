@@ -4,4 +4,4 @@ __pycache__/
 wandb/
 .wandb/
 data/
-bin/
+
