@@ -413,6 +413,69 @@ class FederatedLearning:
 
         return avg_loss, accuracy
 
+    def compute_predictions(
+    model: nn.Module,
+    dataloader: DataLoader,
+    device: Optional[str] = None,
+    loss_function: Optional[nn.Module] = None,
+):
+        """
+        Compute predictions for a given dataloader using the trained model.
+
+        Args:
+            model: The trained model.
+            dataloader: The DataLoader containing the test or train dataset.
+            device: The device to use ('cpu' or 'cuda').
+            loss_function: The loss function to minimize in core.
+
+        Returns:
+            predictions: Tensor of predictions.
+            labels: Tensor of true labels.
+            loss: Computed loss for the given data.
+            accuracy: Computed accuracy for the given data.
+        """
+        model.eval()  # Set the model to evaluation mode
+        predictions = []
+        labels = []
+        
+
+        loss = 0.0
+
+        # Disable gradient computation during inference
+        with torch.no_grad():
+            for inputs, targets in dataloader:
+                inputs, targets = inputs.to(device), targets.to(
+                    device
+                )  # Move to the appropriate device
+
+                # Forward pass
+                preds = model(inputs)  # Get raw model predictions
+
+                if loss_function is not None:
+                    loss += loss_function(preds, targets).item()
+
+                # Get predicted class (class with the highest score)
+                _, predicted = torch.max(preds, 1)
+
+                predictions.append(predicted)
+                labels.append(targets)
+
+        # Concatenate all predictions and labels
+        predictions = torch.cat(predictions)
+        labels = torch.cat(labels)
+
+        correct = (predictions == labels).sum().item()
+        accuracy = 100.0 * correct / len(labels)
+        loss = loss / len(labels)
+
+        return {
+            "val_loss": loss,
+            "val_accuracy": accuracy,
+            "predictions": predictions,
+            "labels": labels
+        }
+
+        return predictions, labels, loss, accuracy
 
     def validate(self, model, val_loader):
         """Separate validation function for cleaner code."""
@@ -475,7 +538,7 @@ class FederatedLearning:
         # Create a DataLoader for the entire validation set
         val_loader = DataLoader(self.global_val_set, batch_size=self.config.batch_size, shuffle=False)
         
-        return self.validate1(self.global_model, val_loader)
+        return self.compute_predictions(self.global_model, val_loader)
     
     def run_model_editing_global(self):
 
