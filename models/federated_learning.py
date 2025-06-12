@@ -512,8 +512,10 @@ class FederatedLearning:
                     loss = self.config.loss_function(outputs, targets)
                     val_loss += loss.item()
                 except Exception as e:
-                    print(f"Error in validation loss calculation: {e}")
-                    print(f"Output shape: {outputs.shape}, Target shape: {targets.shape}")
+                    logging.error(f"Error calculating loss: {e}")
+                 
+                    logging.error(f"Output shape: {outputs.shape}, Target shape: {targets.shape}")
+                   
                     continue
                 
                 # Calculate validation accuracy if classification task
