@@ -413,11 +413,9 @@ class FederatedLearning:
 
         return avg_loss, accuracy
 
-    def compute_predictions(
+    def compute_predictions(self,
     model: nn.Module,
-    dataloader: DataLoader,
-    device: Optional[str] = None,
-    loss_function: Optional[nn.Module] = None,
+    dataloader: DataLoader
 ):
         """
         Compute predictions for a given dataloader using the trained model.
@@ -444,15 +442,15 @@ class FederatedLearning:
         # Disable gradient computation during inference
         with torch.no_grad():
             for inputs, targets in dataloader:
-                inputs, targets = inputs.to(device), targets.to(
-                    device
+                inputs, targets = inputs.to(self.device), targets.to(
+                    self.device
                 )  # Move to the appropriate device
 
                 # Forward pass
                 preds = model(inputs)  # Get raw model predictions
 
-                if loss_function is not None:
-                    loss += loss_function(preds, targets).item()
+                
+                loss += self.config.loss_function(preds, targets).item()
 
                 # Get predicted class (class with the highest score)
                 _, predicted = torch.max(preds, 1)
