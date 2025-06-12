@@ -159,7 +159,7 @@ class FederatedLearning:
             lr=self.config.learning_rate,
             **self.config.optimizer_params
         )
-        optimizer1 = torch.optim.SGD(optimizer_params, lr=0.01, momentum=0.9, weight_decay=1e-4)
+        #optimizer1 = torch.optim.SGD(optimizer_params, lr=0.01, momentum=0.9, weight_decay=1e-4)
         scheduler = None
         if self.config.scheduler_class:
             scheduler = self.config.scheduler_class(optimizer, **self.config.scheduler_params)
@@ -194,103 +194,6 @@ class FederatedLearning:
             })
 
     
-
-
-    def train1(self, model, train_loader, val_loader, client, round):
-        print(f"🧪 SIMPLE PRINT TEST - Client {client}, Round {round}")
-        logging.info(f"🧪 LOGGING TEST - Client {client}, Round {round}")
-        
-        model.train()
-        optimizer_params = [p for p in model.parameters() if p.requires_grad]
-        
-        # Initialize optimizer with logging
-        try:
-            optimizer = self.config.optimizer_class(
-                optimizer_params,
-                lr=self.config.learning_rate,
-                **self.config.optimizer_params
-            )
-            logging.info(f"✅ Optimizer initialized for client {client}: {self.config.optimizer_class.__name__}")
-            print(f"✅ Optimizer initialized for client {client}: {self.config.optimizer_class.__name__}")
-            
-        except Exception as e:
-            logging.error(f"❌ Optimizer failed for client {client}: {e}")
-            print(f"❌ Optimizer failed for client {client}: {e}")
-            raise e
-        
-        # Initialize scheduler with logging
-        scheduler = None
-        if self.config.scheduler_class:
-            try:
-                scheduler = self.config.scheduler_class(optimizer, **self.config.scheduler_params)
-                logging.info(f"✅ Scheduler initialized for client {client}: {self.config.scheduler_class.__name__}")
-                print(f"✅ Scheduler initialized for client {client}: {self.config.scheduler_class.__name__}")
-                
-            except Exception as e:
-                logging.error(f"❌ Scheduler failed for client {client}: {e}")
-                print(f"❌ Scheduler failed for client {client}: {e}")
-                scheduler = None
-        else:
-            logging.info(f"ℹ️ No scheduler configured for client {client}")
-            print(f"ℹ️ No scheduler configured for client {client}")
-        
-        # Remove the duplicate optimizer1 for now - use only the config-based one
-        # optimizer1 = torch.optim.SGD(optimizer_params, lr=0.01, momentum=0.9, weight_decay=1e-4)
-        
-        loss_func = self.config.loss_function
-        
-        for epoch in range(self.epochs_per_round):
-            total_loss = 0
-            batch_count = 0
-            
-            # Log initial LR for this epoch
-            current_lr = optimizer.param_groups[0]['lr']
-            print(f"Epoch {epoch} starting LR: {current_lr:.6f}")
-            
-            for inputs, targets in train_loader:
-                inputs, targets = inputs.to(self.device), targets.to(self.device)
-
-                optimizer.zero_grad()
-                outputs = model(inputs)
-                loss = self.config.loss_function(outputs, targets)
-                loss.backward()
-
-                # FIXED: Use the same optimizer for both zero_grad and step
-                optimizer.step()  # Changed from optimizer1.step()
-                
-                total_loss += loss.item()
-                batch_count += 1
-            
-            # Calculate average loss
-            avg_epoch_loss = total_loss / batch_count if batch_count > 0 else 0
-            
-            # Handle scheduler step AFTER optimizer steps are done
-            if scheduler is not None:
-                lr_before = optimizer.param_groups[0]['lr']
-                scheduler.step()
-                lr_after = optimizer.param_groups[0]['lr']
-                
-                print(f"Scheduler stepped: {lr_before:.6f} → {lr_after:.6f}")
-                logging.info(f"Client {client} Epoch {epoch}: LR {lr_before:.6f} → {lr_after:.6f}")
-            
-            # Evaluate model
-            val_loss, val_accuracy = self.evaluate_model(model, val_loader)
-
-            # Log to wandb
-            wandb.log({
-                f"client_{client}/train_loss": avg_epoch_loss,
-                f"client_{client}/val_loss": val_loss,
-                f"client_{client}/val_accuracy": val_accuracy,
-                f"client_{client}/learning_rate": optimizer.param_groups[0]['lr'],
-                "epoch": epoch,
-                "round": round
-            })
-            
-            print(f"Client {client}, Epoch {epoch}: Loss={avg_epoch_loss:.4f}, Val_Acc={val_accuracy:.4f}, LR={optimizer.param_groups[0]['lr']:.6f}")
-
-        logging.info(f"🎉 Training completed for client {client}")
-        print(f"🎉 Training completed for client {client}")
-
     def train_local_step(self, model, train_loader, val_loader, client, round):
         model.train()
         model.to(self.device)
@@ -572,7 +475,7 @@ class FederatedLearning:
         # Create a DataLoader for the entire validation set
         val_loader = DataLoader(self.global_val_set, batch_size=self.config.batch_size, shuffle=False)
         
-        return self.validate(self.global_model, val_loader)
+        return self.validate1(self.global_model, val_loader)
     
     def run_model_editing_global(self):
 
@@ -627,7 +530,6 @@ class FederatedLearning:
 
             for client_id in selected_clients:
          
-                #self.local_models[client_id].load_state_dict(copy.deepcopy(self.global_model.state_dict()))
                 local_model = copy.deepcopy(self.global_model)
                 data_client_train_set = self.dict_train_client_data[client_id]
                 data_client_val_set = self.dict_val_client_data[client_id]
@@ -636,10 +538,9 @@ class FederatedLearning:
                 val_loader = DataLoader(data_client_val_set, batch_size=self.config.batch_size, shuffle=False)
 
             
-                #self.train_local_step(self.local_models[client_id], train_loader, val_loader, client_id, round)
-                self.train(local_model, train_loader, val_loader, client_id, round)
+                self.train_local_step(self.local_models[client_id], train_loader, val_loader, client_id, round)
+                #self.train(local_model, train_loader, val_loader, client_id, round)
 
-                #current_round_trained_models.append(self.local_models[client_id])
                 local_models.append(local_model)
 
             #self.aggregate(self.global_model, current_round_trained_models)
