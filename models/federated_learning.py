@@ -599,8 +599,8 @@ class FederatedLearning:
                 val_loader = DataLoader(data_client_val_set, batch_size=self.config.batch_size, shuffle=False)
 
             
-                #self.train_local_step(self.local_models[client_id], train_loader, val_loader, client_id, round)
-                self.train(local_model, train_loader, val_loader, client_id, round)
+                self.train_local_step(self.local_models[client_id], train_loader, val_loader, client_id, round)
+                #self.train(local_model, train_loader, val_loader, client_id, round)
 
                 local_models.append(local_model)
 
