@@ -29,7 +29,7 @@ if __name__ == "__main__":
                           model = dino,
                           training_name="FLM",
                           batch_size=64,
-                          learning_rate=0.00001,
+                          learning_rate=0.000001,
                           momentum=0.9,
                           weight_decay=5e-4,
                           dataset="CIFAR100",
