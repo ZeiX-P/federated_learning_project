@@ -520,112 +520,164 @@ class Dataset: # Keeping the class name as 'Dataset' as per your provided code
         
         return client_indices
 
-    def pathological_non_iid_split(self, dataset: Dataset, num_clients: int, shards_per_client: int = 2, seed: int = 42) -> Dict[int, List[int]]:
-    
+    def pathological_non_iid_split(self, dataset: Dataset, num_clients: int, classes_per_client: int = 2, seed: int = 42) -> Dict[int, List[int]]:
+        """
+        Pathological Non-IID split where each client gets samples from exactly 'classes_per_client' classes.
+        
+        Args:
+            dataset: The dataset to split
+            num_clients: Number of clients
+            classes_per_client: Number of classes each client should have (Nc parameter)
+            seed: Random seed for reproducibility
+        
+        Returns:
+            Dictionary mapping client_id to list of sample indices
+        """
         np.random.seed(seed)
         
         # Handle both regular Dataset and Subset objects
         if isinstance(dataset, torch.utils.data.Subset):
             base_dataset = dataset.dataset
             subset_indices = dataset.indices
-            # Get labels for the subset
             labels = np.array([base_dataset.targets[i] for i in subset_indices])
             total_samples = len(subset_indices)
-            # Map subset indices back to original dataset indices
-            original_indices = subset_indices
+            # Use indices relative to the subset (0-based)
+            working_indices = list(range(total_samples))
         else:
-            # Regular dataset
             labels = np.array(dataset.targets)
             total_samples = len(dataset)
-            original_indices = list(range(total_samples))
-        
-        
+            working_indices = list(range(total_samples))
         
         logging.info(f"Pathological Non-IID: Splitting {total_samples} samples across {num_clients} clients")
-        logging.info(f"Shards per client: {shards_per_client}")
+        logging.info(f"Classes per client: {classes_per_client}")
         
-        # Step 1: Sort data by labels
-        # Create (label, original_index) pairs and sort by label
-        label_index_pairs = [(labels[i], original_indices[i]) for i in range(total_samples)]
-        label_index_pairs.sort(key=lambda x: x[0])  # Sort by label
+        # Step 1: Group samples by class
+        class_to_indices = defaultdict(list)
+        for idx, label in enumerate(labels):
+            class_to_indices[label].append(working_indices[idx])
         
-        # Extract sorted indices
-        sorted_indices = [pair[1] for pair in label_index_pairs]
-        sorted_labels = [pair[0] for pair in label_index_pairs]
+        unique_classes = sorted(class_to_indices.keys())
+        num_classes = len(unique_classes)
         
-        logging.info(f"Data sorted by labels. Label distribution after sorting:")
-        unique_labels, counts = np.unique(sorted_labels, return_counts=True)
-        for label, count in zip(unique_labels, counts):
-            logging.info(f"  Label {label}: {count} samples")
+        logging.info(f"Found {num_classes} classes: {unique_classes}")
+        for class_label in unique_classes:
+            logging.info(f"  Class {class_label}: {len(class_to_indices[class_label])} samples")
         
-        # Step 2: Calculate shard configuration
-        total_shards = num_clients * shards_per_client
-        shard_size = total_samples // total_shards
+        # Validate that we can satisfy the requirement
+        if classes_per_client > num_classes:
+            raise ValueError(f"Cannot assign {classes_per_client} classes per client when only {num_classes} classes exist")
         
-        if total_samples % total_shards != 0:
-            logging.warning(f"{total_samples} samples cannot be evenly divided into {total_shards} shards.")
-            logging.warning(f"Using shard size of {shard_size}, leaving {total_samples % total_shards} samples unused.")
+        # Step 2: Assign classes to clients
+        # We need to ensure each client gets exactly 'classes_per_client' classes
+        # and classes are distributed as evenly as possible across clients
         
-        logging.info(f"Creating {total_shards} shards of size {shard_size} each")
+        total_class_assignments = num_clients * classes_per_client
+        classes_needed = total_class_assignments
         
-        # Step 3: Create shards from sorted data
-        shards = []
-        for shard_id in range(total_shards):
-            start_idx = shard_id * shard_size
-            end_idx = start_idx + shard_size
-            if end_idx <= len(sorted_indices):
-                shard_indices = sorted_indices[start_idx:end_idx]
-                shards.append(shard_indices)
-            else:
-                # Handle case where we don't have enough samples for the last shard
-                break
+        # Create a list of class assignments - each class appears multiple times
+        class_assignments = []
+        classes_per_round = classes_needed // num_classes
+        remaining_assignments = classes_needed % num_classes
         
-        actual_shards = len(shards)
-        print(f"Created {actual_shards} complete shards")
+        # Assign each class 'classes_per_round' times
+        for class_label in unique_classes:
+            class_assignments.extend([class_label] * classes_per_round)
         
-        # Step 4: Randomly assign shards to clients
-        # Create list of shard IDs and shuffle them
-        shard_ids = list(range(actual_shards))
-        np.random.shuffle(shard_ids)
+        # Assign remaining classes randomly
+        if remaining_assignments > 0:
+            remaining_classes = np.random.choice(unique_classes, remaining_assignments, replace=False)
+            class_assignments.extend(remaining_classes)
         
-        # Initialize client data containers
+        # Shuffle the class assignments
+        np.random.shuffle(class_assignments)
+        
+        # Step 3: Assign classes to clients
+        client_classes = {client_id: [] for client_id in range(num_clients)}
+        
+        assignment_idx = 0
+        for client_id in range(num_clients):
+            for _ in range(classes_per_client):
+                client_classes[client_id].append(class_assignments[assignment_idx])
+                assignment_idx += 1
+        
+        logging.info("Class assignments per client:")
+        for client_id in range(num_clients):
+            logging.info(f"  Client {client_id}: classes {sorted(client_classes[client_id])}")
+        
+        # Step 4: Distribute samples within each class to clients that have that class
         client_indices = {client_id: [] for client_id in range(num_clients)}
         
-        # Assign shards to clients
-        shard_idx = 0
-        for client_id in range(num_clients):
-            client_shards = []
-            for _ in range(shards_per_client):
-                if shard_idx < len(shard_ids):
-                    shard_id = shard_ids[shard_idx]
-                    client_indices[client_id].extend(shards[shard_id])
-                    client_shards.append(shard_id)
-                    shard_idx += 1
+        for class_label in unique_classes:
+            class_indices = class_to_indices[class_label].copy()
+            np.random.shuffle(class_indices)
             
-            # Shuffle the indices within each client to avoid ordering bias
+            # Find which clients have this class
+            clients_with_class = [client_id for client_id in range(num_clients) 
+                                if class_label in client_classes[client_id]]
+            
+            if not clients_with_class:
+                logging.warning(f"No clients assigned to class {class_label}")
+                continue
+            
+            # Count how many times each client appears for this class
+            client_class_counts = {client_id: client_classes[client_id].count(class_label) 
+                                for client_id in clients_with_class}
+            
+            total_shares = sum(client_class_counts.values())
+            
+            # Distribute samples proportionally
+            start_idx = 0
+            for client_id in clients_with_class:
+                share_ratio = client_class_counts[client_id] / total_shares
+                num_samples = int(len(class_indices) * share_ratio)
+                
+                # Handle the last client to get remaining samples
+                if client_id == clients_with_class[-1]:
+                    num_samples = len(class_indices) - start_idx
+                
+                if num_samples > 0:
+                    client_indices[client_id].extend(class_indices[start_idx:start_idx + num_samples])
+                    start_idx += num_samples
+        
+        # Step 5: Shuffle each client's data
+        for client_id in range(num_clients):
             if client_indices[client_id]:
                 np.random.shuffle(client_indices[client_id])
-            
-            print(f"Client {client_id}: {len(client_indices[client_id])} samples from shards {client_shards}")
         
-        # Step 5: Analyze the class distribution for each client
-        print("\nClass distribution per client:")
+        # Step 6: Analyze the results
+        print(f"\nFinal distribution (each client should have exactly {classes_per_client} classes):")
+        total_assigned = 0
+        
         for client_id in range(num_clients):
             if client_indices[client_id]:
                 # Get labels for this client's samples
                 if isinstance(dataset, torch.utils.data.Subset):
-                    # Map back to get actual labels
-                    client_labels = [base_dataset.targets[idx] for idx in client_indices[client_id]]
+                    client_labels = [labels[idx] for idx in client_indices[client_id]]
                 else:
                     client_labels = [dataset.targets[idx] for idx in client_indices[client_id]]
                 
                 unique_client_labels, client_counts = np.unique(client_labels, return_counts=True)
                 label_dist = {int(label): int(count) for label, count in zip(unique_client_labels, client_counts)}
-                print(f"  Client {client_id}: {label_dist} (total: {len(client_indices[client_id])})")
+                
+                print(f"  Client {client_id}: {len(unique_client_labels)} classes, {len(client_indices[client_id])} samples")
+                print(f"    Classes: {label_dist}")
+                
+                total_assigned += len(client_indices[client_id])
+                
+                # Verify the client has exactly the right number of classes
+                if len(unique_client_labels) != classes_per_client:
+                    logging.warning(f"Client {client_id} has {len(unique_client_labels)} classes, expected {classes_per_client}")
         
-        # Validation
-        total_assigned = sum(len(indices) for indices in client_indices.values())
         print(f"\nValidation: {total_assigned} samples assigned out of {total_samples} total")
+        
+        # Additional validation
+        for client_id in range(num_clients):
+            if client_indices[client_id]:
+                max_idx = max(client_indices[client_id])
+                min_idx = min(client_indices[client_id])
+                if max_idx >= total_samples or min_idx < 0:
+                    raise ValueError(f"Client {client_id} has invalid indices. "
+                                f"Range: [{min_idx}, {max_idx}], Dataset size: {total_samples}")
         
         return client_indices
 
