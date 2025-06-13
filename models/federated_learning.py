@@ -252,6 +252,7 @@ class FederatedLearning:
     def aggregate(self,global_model, selected_clients):
         
         if self.aggregation_method == 'FedAvg':
+            #self.federated_averagingF(global_model, selected_clients)
             self.federated_averaging_aggregate(global_model, selected_clients)
         elif self.aggregation_method == 'FedProx':
             self.federated_proximal()
@@ -288,7 +289,7 @@ class FederatedLearning:
     def federated_averaging_aggregate(self, 
                                  global_model: torch.nn.Module, 
                                  client_models, 
-                                 client_sample_counts) -> torch.nn.Module:
+                                 client_sample_counts=10) -> torch.nn.Module:
         """
         Implements the FederatedAveraging aggregation as described in the algorithm.
         
