@@ -39,12 +39,12 @@ if __name__ == "__main__":
                           epochs=10,
                           optimizer_params={"momentum": 0.9, "weight_decay": 5e-4},
                           scheduler_params={"T_max": 20},
-                          project_name="federated_learning_model_editing_talos")
+                          project_name="FLM")
 
     federated_learning = FederatedLearning(global_model=dino,data=data, num_clients=100, 
                                            aggregation_method="FedAvg", num_rounds=100,
-                                            epochs_per_round=4, distribution_type="non-iid",
-                                            client_fraction=0.1,config=config1)
+                                            epochs_per_round=4, distribution_type="iid",
+                                            client_fraction=0.1,config=config1, class_per_client=1,local_steps=4)
     
     print("Starting Federated Learning process...")
     federated_learning.run_federated_learning()

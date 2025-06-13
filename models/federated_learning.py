@@ -29,7 +29,9 @@ class FederatedLearning:
                  epochs_per_round: int,
                  distribution_type: str,
                  client_fraction: float,
-                 config
+                 config,
+                 class_per_client,
+                 local_steps
             ):
 
         self.global_model = global_model  
@@ -41,7 +43,8 @@ class FederatedLearning:
         self.distribution_type = distribution_type
         self.client_fraction = client_fraction
         self.config = config
-        self.local_steps = 4
+        self.class_per_client = class_per_client
+        self.local_steps = local_steps
 
         if torch.cuda.is_available():
             self.device = torch.device('cuda')
@@ -72,7 +75,8 @@ class FederatedLearning:
                 print(f"Could not analyze class distribution for client {client_id}: {e}")
 
         # Initialise wandb with more detailed configuration
-        run_name = f"{self.aggregation_method}_{self.distribution_type}_{self.num_clients}clients"
+        #run_name = f"{self.aggregation_method}_{self.distribution_type}_{self.num_clients}clients_"
+        run_name = f"{self.distribution_type}_local_steps_{self.local_steps}_class_per_client{self.class_per_client}"
         wandb.init(
             project=self.config.training_name, 
             name=run_name,
@@ -112,7 +116,7 @@ class FederatedLearning:
             indices = self.data.dirichlet_non_iid_split(dataset, num_clients)
 
         elif self.distribution_type == "non-iid":
-            indices = self.data.pathological_non_iid_split(dataset, num_clients)
+            indices = self.data.pathological_non_iid_split(dataset, num_clients,self.class_per_client)
         else:
             raise ValueError(f"Unknown distribution type: {self.distribution_type}")
         return indices
@@ -289,7 +293,7 @@ class FederatedLearning:
     def federated_averaging_aggregate(self, 
                                  global_model: torch.nn.Module, 
                                  client_models, 
-                                 client_sample_counts=1) -> torch.nn.Module:
+                                 client_sample_counts) -> torch.nn.Module:
         """
         Implements the FederatedAveraging aggregation as described in the algorithm.
         
