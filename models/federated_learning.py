@@ -249,11 +249,11 @@ class FederatedLearning:
         })
 
 
-    def aggregate(self,global_model, selected_clients):
+    def aggregate(self,global_model, selected_clients,client_sample_counts):
         
         if self.aggregation_method == 'FedAvg':
             #self.federated_averagingF(global_model, selected_clients)
-            self.federated_averaging_aggregate(global_model, selected_clients)
+            self.federated_averaging_aggregate(global_model, selected_clients,client_sample_counts)
         elif self.aggregation_method == 'FedProx':
             self.federated_proximal()
         elif self.aggregation_method == 'FedNova':
@@ -644,11 +644,18 @@ class FederatedLearning:
             current_round_trained_models = []
             local_models = []
 
+            client_sample_counts = []
+
             for client_id in selected_clients:
          
                 local_model = copy.deepcopy(self.global_model)
                 data_client_train_set = self.dict_train_client_data[client_id]
                 data_client_val_set = self.dict_val_client_data[client_id]
+
+              
+                client_sample_counts.append(len(data_client_train_set))
+
+                
 
                 train_loader = DataLoader(data_client_train_set, batch_size=self.config.batch_size, shuffle=True)
                 val_loader = DataLoader(data_client_val_set, batch_size=self.config.batch_size, shuffle=False)
@@ -660,7 +667,7 @@ class FederatedLearning:
                 local_models.append(local_model)
 
             #self.aggregate(self.global_model, current_round_trained_models)
-            self.aggregate(self.global_model, local_models)
+            self.aggregate(self.global_model, local_models,client_sample_counts)
             global_metrics = self.evaluate_global_model()
 
             wandb.log({
