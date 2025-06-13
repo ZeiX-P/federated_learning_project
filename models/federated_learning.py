@@ -91,7 +91,9 @@ class FederatedLearning:
                 "momentum": self.config.momentum,
                 "weight_decay": self.config.weight_decay,
                 "client_fraction": self.client_fraction,
-                "dataset": self.config.dataset
+                "dataset": self.config.dataset,
+                "class_per_client": self.class_per_client,
+                "local_steps": self.local_steps,
             }
         )
         # Log the model architecture

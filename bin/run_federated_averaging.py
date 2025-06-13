@@ -27,7 +27,7 @@ if __name__ == "__main__":
 
     config1 = Configuration(
                           model = dino,
-                          training_name="federated_learning_model_editing_talos",
+                          training_name="FLM",
                           batch_size=64,
                           learning_rate=5e-5,
                           momentum=0.9,
@@ -43,7 +43,7 @@ if __name__ == "__main__":
 
     federated_learning = FederatedLearning(global_model=dino,data=data, num_clients=100, 
                                            aggregation_method="FedAvg", num_rounds=100,
-                                            epochs_per_round=4, distribution_type="iid",
+                                            epochs_per_round=4, distribution_type="non-idd",
                                             client_fraction=0.1,config=config1, class_per_client=1,local_steps=4)
     
     print("Starting Federated Learning process...")
