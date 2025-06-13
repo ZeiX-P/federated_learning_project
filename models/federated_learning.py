@@ -252,8 +252,8 @@ class FederatedLearning:
     def aggregate(self,global_model, selected_clients,client_sample_counts):
         
         if self.aggregation_method == 'FedAvg':
-            #self.federated_averagingF(global_model, selected_clients)
-            self.federated_averaging_aggregate(global_model, selected_clients,client_sample_counts)
+            self.federated_averagingF(global_model, selected_clients)
+            #self.federated_averaging_aggregate(global_model, selected_clients,client_sample_counts)
         elif self.aggregation_method == 'FedProx':
             self.federated_proximal()
         elif self.aggregation_method == 'FedNova':
