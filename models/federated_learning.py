@@ -252,7 +252,7 @@ class FederatedLearning:
     def aggregate(self,global_model, selected_clients):
         
         if self.aggregation_method == 'FedAvg':
-            self.federated_averagingF(global_model, selected_clients)
+            self.federated_averaging_aggregate(global_model, selected_clients)
         elif self.aggregation_method == 'FedProx':
             self.federated_proximal()
         elif self.aggregation_method == 'FedNova':
@@ -283,6 +283,58 @@ class FederatedLearning:
         # Load the averaged weights into the global model
         global_model.load_state_dict(global_dict)
 
+        return global_model
+
+    def federated_averaging_aggregate(self, 
+                                 global_model: torch.nn.Module, 
+                                 client_models, 
+                                 client_sample_counts) -> torch.nn.Module:
+        """
+        Implements the FederatedAveraging aggregation as described in the algorithm.
+        
+        Formula: w_{t+1} = Σ_{k∈S_t} (n_k / m) * w_k^{t+1}
+        where:
+        - n_k is the number of samples for client k
+        - m is the total number of samples across all selected clients
+        - w_k^{t+1} is the updated model from client k
+        
+        Args:
+            global_model: The current global model
+            client_models: List of updated client models
+            client_sample_counts: List of sample counts for each client (n_k values)
+        
+        Returns:
+            Updated global model with aggregated weights
+        """
+        
+        # Calculate total samples across all participating clients
+        total_samples = sum(client_sample_counts)
+        
+        if total_samples == 0:
+            raise ValueError("Total samples cannot be zero")
+        
+        if len(client_models) != len(client_sample_counts):
+            raise ValueError("Number of client models must match number of sample counts")
+        
+        # Get the global model's state dict
+        global_dict = global_model.state_dict()
+        
+        # Initialize aggregated weights to zero
+        aggregated_dict = {}
+        for key in global_dict:
+            aggregated_dict[key] = torch.zeros_like(global_dict[key])
+        
+        # Aggregate client models weighted by their sample counts
+        for client_model, n_k in zip(client_models, client_sample_counts):
+            client_dict = client_model.state_dict()
+            weight = n_k / total_samples  # This is n_k/m in the formula
+            
+            for key in aggregated_dict:
+                aggregated_dict[key] += weight * client_dict[key].float()
+        
+        # Load the aggregated weights into the global model
+        global_model.load_state_dict(aggregated_dict)
+        
         return global_model
 
     def federated_averagingG(self,global_model: torch.nn.Module, client_models_for_aggregation):
@@ -601,8 +653,8 @@ class FederatedLearning:
                 val_loader = DataLoader(data_client_val_set, batch_size=self.config.batch_size, shuffle=False)
 
             
-                #self.train_local_step(self.local_models[client_id], train_loader, val_loader, client_id, round)
-                self.train(local_model, train_loader, val_loader, client_id, round)
+                self.train_local_step(self.local_models[client_id], train_loader, val_loader, client_id, round)
+                #self.train(local_model, train_loader, val_loader, client_id, round)
 
                 local_models.append(local_model)
 
