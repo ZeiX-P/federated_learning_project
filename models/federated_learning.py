@@ -289,7 +289,7 @@ class FederatedLearning:
     def federated_averaging_aggregate(self, 
                                  global_model: torch.nn.Module, 
                                  client_models, 
-                                 client_sample_counts=10) -> torch.nn.Module:
+                                 client_sample_counts=1) -> torch.nn.Module:
         """
         Implements the FederatedAveraging aggregation as described in the algorithm.
         
