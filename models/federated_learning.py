@@ -538,7 +538,7 @@ class FederatedLearning:
         # Create a DataLoader for the entire validation set
         val_loader = DataLoader(self.global_val_set, batch_size=self.config.batch_size, shuffle=False)
         
-        return self.compute_predictions(self.global_model, val_loader)
+        return self.validate(self.global_model, val_loader)
     
     def run_model_editing_global(self):
 
@@ -601,8 +601,8 @@ class FederatedLearning:
                 val_loader = DataLoader(data_client_val_set, batch_size=self.config.batch_size, shuffle=False)
 
             
-                #self.train_local_step(self.local_models[client_id], train_loader, val_loader, client_id, round)
-                self.train(local_model, train_loader, val_loader, client_id, round)
+                self.train_local_step(self.local_models[client_id], train_loader, val_loader, client_id, round)
+                #self.train(local_model, train_loader, val_loader, client_id, round)
 
                 local_models.append(local_model)
 
