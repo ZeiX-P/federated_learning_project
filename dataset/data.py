@@ -520,7 +520,7 @@ class Dataset: # Keeping the class name as 'Dataset' as per your provided code
         
         return client_indices
 
-    def pathological_non_iid_split(self, dataset: Dataset, num_clients: int, classes_per_client: int = 2, seed: int = 42) -> Dict[int, List[int]]:
+    def pathological_non_iid_split(self, dataset: Dataset, num_clients: int, classes_per_client: int = 10, seed: int = 42) -> Dict[int, List[int]]:
         """
         Pathological Non-IID split where each client gets samples from exactly 'classes_per_client' classes.
         
