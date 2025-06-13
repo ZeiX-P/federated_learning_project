@@ -112,7 +112,7 @@ class FederatedLearning:
             indices = self.data.dirichlet_non_iid_split(dataset, num_clients)
 
         elif self.distribution_type == "non-iid":
-            indices = self.data.pathological_non_iid_split(dataset, num_clients)
+            indices = self.data.pathological_non_iid_split1(dataset, num_clients)
         else:
             raise ValueError(f"Unknown distribution type: {self.distribution_type}")
         return indices

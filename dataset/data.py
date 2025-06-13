@@ -323,6 +323,123 @@ class Dataset: # Keeping the class name as 'Dataset' as per your provided code
         
         return indices_clients
 
+    def pathological_non_iid_split1(self, dataset: Dataset, num_clients: int, shards_per_client: int = 2, seed: int = 42) -> Dict[int, List[int]]:
+    
+        np.random.seed(seed)
+        
+        # Handle both regular Dataset and Subset objects
+        if isinstance(dataset, torch.utils.data.Subset):
+            base_dataset = dataset.dataset
+            subset_indices = dataset.indices
+            # Get labels for the subset
+            labels = np.array([base_dataset.targets[i] for i in subset_indices])
+            total_samples = len(subset_indices)
+            # Use sequential indices for the subset (0, 1, 2, ..., len(subset)-1)
+            working_indices = list(range(total_samples))
+        else:
+            # Regular dataset
+            labels = np.array(dataset.targets)
+            total_samples = len(dataset)
+            working_indices = list(range(total_samples))
+        
+        logging.info(f"Pathological Non-IID: Splitting {total_samples} samples across {num_clients} clients")
+        logging.info(f"Shards per client: {shards_per_client}")
+        
+        # Step 1: Sort data by labels
+        # Create (label, working_index) pairs and sort by label
+        label_index_pairs = [(labels[i], working_indices[i]) for i in range(total_samples)]
+        label_index_pairs.sort(key=lambda x: x[0])  # Sort by label
+        
+        # Extract sorted indices
+        sorted_indices = [pair[1] for pair in label_index_pairs]
+        sorted_labels = [pair[0] for pair in label_index_pairs]
+        
+        logging.info(f"Data sorted by labels. Label distribution after sorting:")
+        unique_labels, counts = np.unique(sorted_labels, return_counts=True)
+        for label, count in zip(unique_labels, counts):
+            logging.info(f"  Label {label}: {count} samples")
+        
+        # Step 2: Calculate shard configuration
+        total_shards = num_clients * shards_per_client
+        shard_size = total_samples // total_shards
+        
+        if total_samples % total_shards != 0:
+            logging.warning(f"{total_samples} samples cannot be evenly divided into {total_shards} shards.")
+            logging.warning(f"Using shard size of {shard_size}, leaving {total_samples % total_shards} samples unused.")
+        
+        logging.info(f"Creating {total_shards} shards of size {shard_size} each")
+        
+        # Step 3: Create shards from sorted data
+        shards = []
+        for shard_id in range(total_shards):
+            start_idx = shard_id * shard_size
+            end_idx = start_idx + shard_size
+            if end_idx <= len(sorted_indices):
+                shard_indices = sorted_indices[start_idx:end_idx]
+                shards.append(shard_indices)
+            else:
+                # Handle case where we don't have enough samples for the last shard
+                break
+        
+        actual_shards = len(shards)
+        print(f"Created {actual_shards} complete shards")
+        
+        # Step 4: Randomly assign shards to clients
+        # Create list of shard IDs and shuffle them
+        shard_ids = list(range(actual_shards))
+        np.random.shuffle(shard_ids)
+        
+        # Initialize client data containers
+        client_indices = {client_id: [] for client_id in range(num_clients)}
+        
+        # Assign shards to clients
+        shard_idx = 0
+        for client_id in range(num_clients):
+            client_shards = []
+            for _ in range(shards_per_client):
+                if shard_idx < len(shard_ids):
+                    shard_id = shard_ids[shard_idx]
+                    client_indices[client_id].extend(shards[shard_id])
+                    client_shards.append(shard_id)
+                    shard_idx += 1
+            
+            # Shuffle the indices within each client to avoid ordering bias
+            if client_indices[client_id]:
+                np.random.shuffle(client_indices[client_id])
+            
+            print(f"Client {client_id}: {len(client_indices[client_id])} samples from shards {client_shards}")
+        
+        # Step 5: Analyze the class distribution for each client
+        print("\nClass distribution per client:")
+        for client_id in range(num_clients):
+            if client_indices[client_id]:
+                # Get labels for this client's samples
+                if isinstance(dataset, torch.utils.data.Subset):
+                    # The indices in client_indices[client_id] are subset indices (0-based)
+                    # We need to map them to the actual labels
+                    client_labels = [labels[idx] for idx in client_indices[client_id]]
+                else:
+                    client_labels = [dataset.targets[idx] for idx in client_indices[client_id]]
+                
+                unique_client_labels, client_counts = np.unique(client_labels, return_counts=True)
+                label_dist = {int(label): int(count) for label, count in zip(unique_client_labels, client_counts)}
+                print(f"  Client {client_id}: {label_dist} (total: {len(client_indices[client_id])})")
+        
+        # Validation
+        total_assigned = sum(len(indices) for indices in client_indices.values())
+        print(f"\nValidation: {total_assigned} samples assigned out of {total_samples} total")
+        
+        # Additional validation for subset case
+        if isinstance(dataset, torch.utils.data.Subset):
+            for client_id in range(num_clients):
+                if client_indices[client_id]:
+                    max_idx = max(client_indices[client_id])
+                    min_idx = min(client_indices[client_id])
+                    if max_idx >= total_samples or min_idx < 0:
+                        raise ValueError(f"Client {client_id} has invalid indices. "
+                                    f"Range: [{min_idx}, {max_idx}], Dataset size: {total_samples}")
+        
+        return client_indices
     
     def dirichlet_non_iid_split(self, dataset: Dataset, num_clients: int, alpha: float = 0.5, seed: int = 42) -> Dict[int, List[int]]:
     
