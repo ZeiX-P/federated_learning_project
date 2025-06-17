@@ -44,7 +44,7 @@ if __name__ == "__main__":
     federated_learning = FederatedLearning(global_model=dino,data=data, num_clients=100, 
                                            aggregation_method="FedAvg", num_rounds=100,
                                             epochs_per_round=4, distribution_type="non-iid",
-                                            client_fraction=0.1,config=config1, class_per_client=50,local_steps=16)
+                                            client_fraction=0.1,config=config1, class_per_client=50,local_steps=4)
     
     print("Starting Federated Learning process...")
     federated_learning.run_federated_learning()
