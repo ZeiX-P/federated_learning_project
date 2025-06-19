@@ -92,6 +92,10 @@ def train_model(
     loss_func = training_params.loss_function
     optimizer = training_params.optimizer
     scheduler = training_params.scheduler
+    optimizer_params = [p for p in model.parameters() if p.requires_grad]
+    optimizer = torch.optim.SGD(optimizer_params, lr=0.01, momentum=0.9, weight_decay=1e-4)
+
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
 
     best_acc = 0
     num_epochs = training_params.epochs
