@@ -431,14 +431,14 @@ config = Configuration(
 
 train_dataloader, val_dataloader = data.get_dataloaders(config.dataset)
 
-'''
+
 federated_averaging(
     dataset=data.get_dataset(config.dataset, apply_transform=True),
     num_clients=10,
     global_model=dino,
     training_params=config,
     iid=True,  # Set to True for IID data distribution
-    num_rounds=15,
+    num_rounds=20,
     batch_size=config.batch_size,
     project_name=config.project_name,
     wandb_log=True,
@@ -454,3 +454,4 @@ res_dict = train_model_with_mask(
     top_k_mask=0.1,  # keep top 20% least important parameters (freeze bottom 80%)
     mask_strategy="fisher_left_only"  # Use the new strategy
 )
+'''
