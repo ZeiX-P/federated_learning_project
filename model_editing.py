@@ -450,7 +450,7 @@ res_dict = train_model_with_mask(
     training_params=config,
     train_loader=train_dataloader,
     val_loader=val_dataloader,
-    project_name="fl_centralized_fisher_editing",
+    project_name="fl_centralized_fisher_editing_maskratio=0.1",
     top_k_mask=0.1,  # keep top 20% least important parameters (freeze bottom 80%)
     mask_strategy="fisher_left_only"  # Use the new strategy
 )
