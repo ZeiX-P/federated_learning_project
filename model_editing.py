@@ -408,22 +408,22 @@ dino = timm.create_model('vit_small_patch16_224.dino', pretrained=True)
 
 
 for param in dino.parameters():
-    param.requires_grad = True # Ensure all parameters are trainable initially
+    param.requires_grad = False # Ensure all parameters are trainable initially
 
 dino.head = nn.Linear(384, 100) 
 
 config = Configuration(
     model=dino,
-    training_name="fl_centralized_baseline",
+    training_name="fl_centralized_editing",
     batch_size=64,
-    learning_rate=1e-3,
+    learning_rate=0.001,
     momentum=0.9,
     weight_decay=5e-4,
     dataset="CIFAR100",
     optimizer_class=torch.optim.SGD,
     loss_function=nn.CrossEntropyLoss(),
     scheduler_class=torch.optim.lr_scheduler.CosineAnnealingLR,
-    epochs=5,
+    epochs=15,
     optimizer_params={"momentum": 0.9, "weight_decay": 5e-4},
     scheduler_params={"T_max": 20},
     project_name="fl_centralized_model_editing",
@@ -431,19 +431,20 @@ config = Configuration(
 
 train_dataloader, val_dataloader = data.get_dataloaders(config.dataset)
 
-
+'''
 federated_averaging(
     dataset=data.get_dataset(config.dataset, apply_transform=True),
     num_clients=10,
     global_model=dino,
     training_params=config,
     iid=True,  # Set to True for IID data distribution
-    num_rounds=5,
+    num_rounds=15,
     batch_size=config.batch_size,
     project_name=config.project_name,
     wandb_log=True,
     wandb_save=True
 )
+
 '''
 res_dict = train_model_with_mask(
     training_params=config,
@@ -453,4 +454,3 @@ res_dict = train_model_with_mask(
     top_k_mask=0.1,  # keep top 20% least important parameters (freeze bottom 80%)
     mask_strategy="fisher_left_only"  # Use the new strategy
 )
-'''
