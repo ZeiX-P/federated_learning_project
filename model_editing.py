@@ -414,7 +414,7 @@ dino.head = nn.Linear(384, 100)
 
 config = Configuration(
     model=dino,
-    training_name="fl_centralized_editing",
+    training_name="fl_centralized_editing_lr=0.001_mask=0.1",
     batch_size=64,
     learning_rate=0.001,
     momentum=0.9,
@@ -426,12 +426,12 @@ config = Configuration(
     epochs=15,
     optimizer_params={"momentum": 0.9, "weight_decay": 5e-4},
     scheduler_params={"T_max": 20},
-    project_name="fl_centralized_model_editing",
+    project_name="FLM",
 )
 
 train_dataloader, val_dataloader = data.get_dataloaders(config.dataset)
 
-
+'''
 federated_averaging(
     dataset=data.get_dataset(config.dataset, apply_transform=True),
     num_clients=10,
@@ -450,8 +450,7 @@ res_dict = train_model_with_mask(
     training_params=config,
     train_loader=train_dataloader,
     val_loader=val_dataloader,
-    project_name="fl_centralized_fisher_editing_maskratio=0.1",
+    project_name="FLM",
     top_k_mask=0.1,  # keep top 20% least important parameters (freeze bottom 80%)
     mask_strategy="fisher_left_only"  # Use the new strategy
 )
-'''
