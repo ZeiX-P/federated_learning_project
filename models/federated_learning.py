@@ -75,7 +75,7 @@ class FederatedLearning:
                 print(f"Could not analyze class distribution for client {client_id}: {e}")
 
         # Initialise wandb with more detailed configuration
-        #run_name = f"{self.aggregation_method}_{self.distribution_type}_{self.num_clients}clients_"
+       
         run_name = f"{self.distribution_type}_local_steps_{self.local_steps}_class_per_client{self.class_per_client}"
         wandb.init(
             project=self.config.training_name, 
@@ -268,29 +268,6 @@ class FederatedLearning:
             raise ValueError(f"Unknown aggregation method: {self.aggregation_method}")
         wandb.log({"status": "aggregation_complete"})
 
-    def federated_averagingF(self,
-    global_model: torch.nn.Module, client_models
-) -> torch.nn.Module:
-
-        global_dict = global_model.state_dict()
-
-        for key in global_dict:
-            # Compute the average of the corresponding parameter across all client models
-            global_dict[key] = torch.mean(
-                torch.stack(
-                    [
-                        client_model.state_dict()[key].float()
-                        for client_model in client_models
-                    ],
-                    dim=0,
-                ),
-                dim=0,
-            )
-
-        # Load the averaged weights into the global model
-        global_model.load_state_dict(global_dict)
-
-        return global_model
 
     def federated_averaging_aggregate(self, 
                                  global_model: torch.nn.Module, 
@@ -344,74 +321,6 @@ class FederatedLearning:
         
         return global_model
 
-    def federated_averagingG(self,global_model: torch.nn.Module, client_models_for_aggregation):
-    
-        if not client_models_for_aggregation:
-            print("Warning: No client models to aggregate in this round. Global model remains unchanged.")
-            return
-
-        avg_weights = copy.deepcopy(client_models_for_aggregation[0].state_dict())
-
-        for key in avg_weights:
-     
-            if not client_models_for_aggregation[0].state_dict()[key].requires_grad:
-                continue
-
-            avg_weights[key] = torch.stack(
-                [client_model.state_dict()[key] for client_model in client_models_for_aggregation]
-            ).mean(dim=0)
-
-        global_model.load_state_dict(avg_weights)
-
-
-
-    def federated_averaging1(self):
-        # Average only trainable (requires_grad=True) parameters
-        avg_weights = copy.deepcopy(self.local_models[0].state_dict())
-        for key in avg_weights:
-            if not self.local_models[0].state_dict()[key].requires_grad:
-                continue
-            avg_weights[key] = torch.stack(
-                [client.state_dict()[key] for client in self.local_models.values()]
-            ).mean(dim=0)
-
-        # Load updated weights into global and local models
-        state_dict = self.global_model.state_dict()
-        state_dict.update(avg_weights)
-        self.global_model.load_state_dict(state_dict)
-        for client_id in range(self.num_clients):
-            self.local_models[client_id].load_state_dict(copy.deepcopy(self.global_model.state_dict()))
-
-    def federated_averaging2(self):
-    # Start with a copy of the first local model's state_dict
-        avg_weights = copy.deepcopy(self.local_models[0].state_dict())
-
-        for key in avg_weights:
-            # Stack and average weights across all client models
-            avg_weights[key] = torch.stack(
-                [client.state_dict()[key].float() for client in self.local_models.values()],
-                dim=0
-            ).mean(dim=0)
-
-        # Load averaged weights into global model
-        self.global_model.load_state_dict(avg_weights)
-
-        # Copy global model weights back to all local models
-        for client_id in range(self.num_clients):
-            self.local_models[client_id].load_state_dict(copy.deepcopy(self.global_model.state_dict()))
-
-
-    def federated_averaging(self):
-        client_weights = [client_model.state_dict() for client_model in self.local_models.values()]
-        avg_weights = copy.deepcopy(client_weights[0])
-        for key in avg_weights:
-            avg_weights[key] = torch.zeros_like(avg_weights[key])
-            for i in range(len(client_weights)):
-                avg_weights[key] += client_weights[i][key]
-            avg_weights[key] = avg_weights[key] / len(client_weights)
-        self.global_model.load_state_dict(avg_weights)
-        for client_id in range(self.num_clients):
-            self.local_models[client_id].load_state_dict(copy.deepcopy(avg_weights))
 
     def federated_proximal(self):
         # Basic FedProx implementation with μ=0.01 (proximal term coefficient)
@@ -597,9 +506,9 @@ class FederatedLearning:
         # Create a DataLoader for the entire validation set
         val_loader = DataLoader(self.global_val_set, batch_size=self.config.batch_size, shuffle=False)
         
-        return self.validate(self.global_model, val_loader)
+        return self.validate1(self.global_model, val_loader)
     
-    def run_model_editing_global(self):
+    def run_model_editing_federated(self):
 
         for round in range(self.num_rounds):
             print(f"--- Round {round+1}/{self.num_rounds} ---")
@@ -684,7 +593,7 @@ class FederatedLearning:
 
             print(f"Round {round+1} - Global validation accuracy: {global_metrics.get('val_accuracy', 0):.2f}%")
 
-    def run_model_editing_talos(self):
+    def run_model_editing_federated(self):
         for round in range(self.num_rounds):
             wandb.log({"round": round, "round_progress": (round + 1) / self.num_rounds * 100})
 
@@ -734,7 +643,7 @@ class FederatedLearning:
                     shuffle=False
                 )
 
-                self.train_with_global_mask(
+                self.train_with_global_mask_local_step(
                     self.local_models[client],
                     train_loader,
                     val_loader,
@@ -754,7 +663,7 @@ class FederatedLearning:
             })
 
 
-    def train_with_global_mask(self, model, train_loader, val_loader, client_id, round, mask):
+    def train_with_global_mask_epochs(self, model, train_loader, val_loader, client_id, round, mask):
         # Apply the binary mask using requires_grad
         for name, param in model.named_parameters():
             if name in mask:
@@ -816,6 +725,83 @@ class FederatedLearning:
                 "round": round,
                 "epoch": epoch
             })
+
+
+    def train_with_global_mask_local_step(self, model, train_loader, val_loader, client_id, round, mask):
+        # Apply the binary mask using requires_grad
+        for name, param in model.named_parameters():
+            if name in mask:
+                if (mask[name] == 0).all():
+                    param.requires_grad_(False)
+                else:
+                    param.requires_grad_(True)
+
+        # Filter parameters by requires_grad
+        optimizer_params = [p for p in model.parameters() if p.requires_grad]
+
+        optimizer = self.config.optimizer_class(
+            optimizer_params,
+            lr=self.config.learning_rate,
+            **self.config.optimizer_params
+        )
+
+        scheduler = None
+        if self.config.scheduler_class:
+            scheduler = self.config.scheduler_class(optimizer, **self.config.scheduler_params)
+
+        loss_func = self.config.loss_function
+
+        # Local step training loop
+        model.train()
+        step = 0
+        total_steps = self.steps_per_round  # You must define this in your config or class
+        data_iter = iter(train_loader)
+
+        correct, total = 0, 0
+        running_loss = 0.0
+
+        while step < total_steps:
+            try:
+                inputs, targets = next(data_iter)
+            except StopIteration:
+                data_iter = iter(train_loader)
+                inputs, targets = next(data_iter)
+
+            inputs, targets = inputs.to(self.device), targets.to(self.device)
+
+            preds = model(inputs)
+            loss = loss_func(preds, targets)
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            running_loss += loss.item() * targets.size(0)
+            _, predicted = preds.max(1)
+            total += targets.size(0)
+            correct += predicted.eq(targets).sum().item()
+
+            if scheduler is not None:
+                scheduler.step()
+
+            # Optional: log every step
+            wandb.log({
+                f"client_{client_id}/step_loss": loss.item(),
+                "round": round,
+                "step": step + 1
+            })
+
+            step += 1
+
+        train_loss = running_loss / total
+        train_accuracy = 100.0 * correct / total
+
+        # Final log per round
+        wandb.log({
+            f"client_{client_id}/train_loss": train_loss,
+            f"client_{client_id}/train_accuracy": train_accuracy,
+            "round": round
+        })
 
 
     def compute_fisher_diag(self, model, dataloader, loss_fn):
