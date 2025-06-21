@@ -754,7 +754,7 @@ class FederatedLearning:
         # Local step training loop
         model.train()
         step = 0
-        total_steps = self.steps_per_round  # You must define this in your config or class
+        total_steps = self.local_steps  # You must define this in your config or class
         data_iter = iter(train_loader)
 
         correct, total = 0, 0
