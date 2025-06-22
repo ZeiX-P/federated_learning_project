@@ -603,8 +603,11 @@ class FederatedLearning:
 
                 local_mask = self.generate_mask(fisher, top_k=0.01)
                 dict_client_masks[client_id] = local_mask
+                total_params = sum(m.numel() for m in local_mask.values())
+                frozen_params = sum((m == 0).sum().item() for m in local_mask.values())
+                sparsity = frozen_params / total_params if total_params > 0 else 0
                 wandb.log({
-                    f"client_{client_id}/mask_sparsity": sum(1 for v in local_mask.values() if v.sum() == 0) / len(local_mask)
+                    f"client_{client_id}/mask_sparsity": sparsity
                 })
 
                 self.train_with_global_mask_local_step(local_model, train_loader, val_loader, client_id, round, local_mask)
@@ -894,17 +897,17 @@ class FederatedLearning:
             
             if strategy == "fisher_least":
                 k = max(1, int(top_k * total_elements))
-                threshold = torch.kthvalue(all_scores, k).values.item()
+                threshold = torch.kthvalue(all_scores, k).values
                 compare = lambda x: x <= threshold
             elif strategy == "fisher_most":
                 k = max(1, int((1 - top_k) * total_elements))
-                threshold = torch.kthvalue(all_scores, k).values.item()
+                threshold = torch.kthvalue(all_scores, k).values
                 compare = lambda x: x >= threshold
             elif strategy == "fisher_left_only":
                 # New strategy: only parameters on the left side of distribution (least important)
                 # This sets mask to 1 ONLY for the leftmost top_k fraction of Fisher values
                 k = max(1, int(top_k * total_elements))
-                threshold = torch.kthvalue(all_scores, k).values.item()
+                threshold = torch.kthvalue(all_scores, k).values
                 compare = lambda x: x <= threshold
             else:
                 raise ValueError(f"Unknown Fisher strategy: {strategy}")
