@@ -894,17 +894,17 @@ class FederatedLearning:
             
             if strategy == "fisher_least":
                 k = max(1, int(top_k * total_elements))
-                threshold = torch.kthvalue(all_scores, k).values
+                threshold = torch.kthvalue(all_scores, k).values.item()
                 compare = lambda x: x <= threshold
             elif strategy == "fisher_most":
                 k = max(1, int((1 - top_k) * total_elements))
-                threshold = torch.kthvalue(all_scores, k).values
+                threshold = torch.kthvalue(all_scores, k).values.item()
                 compare = lambda x: x >= threshold
             elif strategy == "fisher_left_only":
                 # New strategy: only parameters on the left side of distribution (least important)
                 # This sets mask to 1 ONLY for the leftmost top_k fraction of Fisher values
                 k = max(1, int(top_k * total_elements))
-                threshold = torch.kthvalue(all_scores, k).values
+                threshold = torch.kthvalue(all_scores, k).values.item()
                 compare = lambda x: x <= threshold
             else:
                 raise ValueError(f"Unknown Fisher strategy: {strategy}")
