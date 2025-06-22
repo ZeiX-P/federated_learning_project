@@ -379,7 +379,12 @@ class FederatedLearning:
         avg_loss = val_loss / total
         accuracy = correct / total
 
-        return avg_loss, accuracy
+        return {
+            "val_loss": avg_loss,
+            "val_accuracy": accuracy
+        }
+
+        
 
     def compute_predictions(self,
     model: nn.Module,
