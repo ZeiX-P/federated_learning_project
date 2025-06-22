@@ -7,7 +7,7 @@ import copy
 from models.train import train_with_global_mask
 from typing import Optional, Dict, Union
 from torch import nn
-from utils.cam_utils import extract_param_feature_map
+
 from collections import defaultdict
 from utils.models_utils import apply_model_diff, compute_model_diff, copy_model
 import torch
