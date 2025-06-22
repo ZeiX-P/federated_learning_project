@@ -508,43 +508,6 @@ class FederatedLearning:
         
         return self.validate1(self.global_model, val_loader)
     
-    def run_model_editing_federated(self):
-
-        for round in range(self.num_rounds):
-            print(f"--- Round {round+1}/{self.num_rounds} ---")
-            wandb.log({"round_progress": round / self.num_rounds * 100})
-
-            num_selected_clients = max(1, int(self.client_fraction * self.num_clients))
-            selected_clients = random.sample(range(self.num_clients), num_selected_clients)
-
-            wandb.log({"active_clients": num_selected_clients, "round": round})
-
-            dict_fisher_scores = {}
-
-            for client in selected_clients:
-                train_loader = DataLoader(self.dict_train_client_data[client], batch_size=self.config.batch_size, shuffle=True)
-                fisher = self.compute_fisher_diag(self.local_models[client], train_loader, self.config.loss_function)
-                fisher_named = self.reshape_fisher_to_named(fisher, self.local_models[client])
-                dict_fisher_scores[client] = fisher_named
-
-            global_fisher = self.aggregate_sensitivity_scores(dict_fisher_scores)
-            global_mask = self.create_mask_from_fisher(global_fisher, top_k=0.5)
-
-            for client in selected_clients:
-                train_loader = DataLoader(self.dict_train_client_data[client], batch_size=self.config.batch_size, shuffle=True)
-                val_loader = DataLoader(self.dict_val_client_data[client], batch_size=self.config.batch_size, shuffle=False)
-                self.train_with_global_mask(self.local_models[client], train_loader, val_loader, client, round, global_mask)
-
-            self.aggregate()
-            global_metrics = self.evaluate_global_model()
-
-            wandb.log({
-                "global/val_loss": global_metrics["val_loss"],
-                "global/val_accuracy": global_metrics.get("val_accuracy", 0),
-                "round": round
-            })
-
-            print(f"Round {round+1} - Global validation accuracy: {global_metrics.get('val_accuracy', 0):.2f}%")
 
     def run_federated_learning(self):
         for round in range(self.num_rounds):
@@ -604,56 +567,48 @@ class FederatedLearning:
                 "active_clients": num_selected_clients,
                 "selected_clients": selected_clients
             })
+            current_round_trained_models = []
+            local_models = []
+
+            client_sample_counts = []
+
 
             dict_fisher_scores = {}
             dict_client_masks = {}
 
-            # Step 1: Compute local Fisher + create local mask per client
-            for client in selected_clients:
-                train_loader = DataLoader(
-                    self.dict_train_client_data[client],
-                    batch_size=self.config.batch_size,
-                    shuffle=True
-                )
+
+            for client_id in selected_clients:
+         
+                local_model = copy.deepcopy(self.global_model)
+                data_client_train_set = self.dict_train_client_data[client_id]
+                data_client_val_set = self.dict_val_client_data[client_id]
+
+              
+                client_sample_counts.append(len(data_client_train_set))
+
+                
+
+                train_loader = DataLoader(data_client_train_set, batch_size=self.config.batch_size, shuffle=True)
+                val_loader = DataLoader(data_client_val_set, batch_size=self.config.batch_size, shuffle=False)
 
                 fisher = self.compute_fisher_information(
-                    self.local_models[client], train_loader, self.config.loss_function
+                    local_model, train_loader, self.config.loss_function
                 )
-                #fisher_named = self.reshape_fisher_to_named(fisher, self.local_models[client])
-                #dict_fisher_scores[client] = fisher_named
+              
 
                 local_mask = self.generate_global_mask(fisher, top_k=0.01)
-                dict_client_masks[client] = local_mask
-
+                dict_client_masks[client_id] = local_mask
                 wandb.log({
-                    f"client_{client}/mask_sparsity": sum(1 for v in local_mask.values() if v.sum() == 0) / len(local_mask),
-                    f"client_{client}/fisher_norm": sum(v.norm().item() for v in fisher.values())
+                    f"client_{client_id}/mask_sparsity": sum(1 for v in local_mask.values() if v.sum() == 0) / len(local_mask),
+                    f"client_{client_id}/fisher_norm": sum(v.norm().item() for v in fisher.values())
                 })
 
-            # Step 2: Train clients with their own masks
-            for client in selected_clients:
-                train_loader = DataLoader(
-                    self.dict_train_client_data[client],
-                    batch_size=self.config.batch_size,
-                    shuffle=True
-                )
-                val_loader = DataLoader(
-                    self.dict_val_client_data[client],
-                    batch_size=self.config.batch_size,
-                    shuffle=False
-                )
+                self.train_with_global_mask_local_step(local_model, train_loader, val_loader, client_id, round, local_mask)
 
-                self.train_with_global_mask_local_step(
-                    self.local_models[client],
-                    train_loader,
-                    val_loader,
-                    client,
-                    round,
-                    dict_client_masks[client]
-                )
+                local_models.append(local_model)
 
             # Step 3: Federated aggregation
-            self.aggregate(self.global_model, local_models,client_sample_counts)
+            self.aggregate(self.global_model, local_models, client_sample_counts)
 
             # Step 4: Evaluate and log global model
             global_metrics = self.evaluate_global_model()
