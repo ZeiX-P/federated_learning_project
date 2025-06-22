@@ -653,7 +653,7 @@ class FederatedLearning:
                 )
 
             # Step 3: Federated aggregation
-            self.aggregate()
+            self.aggregate(self.global_model, local_models,client_sample_counts)
 
             # Step 4: Evaluate and log global model
             global_metrics = self.evaluate_global_model()
