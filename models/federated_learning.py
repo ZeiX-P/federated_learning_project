@@ -377,7 +377,7 @@ class FederatedLearning:
                 total += targets.size(0)
 
         avg_loss = val_loss / total
-        accuracy = correct / total
+        accuracy =100* correct / total
 
         return {
             "val_loss": avg_loss,
@@ -604,8 +604,7 @@ class FederatedLearning:
                 local_mask = self.generate_mask(fisher, top_k=0.01)
                 dict_client_masks[client_id] = local_mask
                 wandb.log({
-                    f"client_{client_id}/mask_sparsity": sum(1 for v in local_mask.values() if v.sum() == 0) / len(local_mask),
-                    f"client_{client_id}/fisher_norm": sum(v.norm().item() for v in fisher.values())
+                    f"client_{client_id}/mask_sparsity": sum(1 for v in local_mask.values() if v.sum() == 0) / len(local_mask)
                 })
 
                 self.train_with_global_mask_local_step(local_model, train_loader, val_loader, client_id, round, local_mask)
@@ -698,17 +697,17 @@ class FederatedLearning:
 
         # Filter parameters by requires_grad
         optimizer_params = [p for p in model.parameters() if p.requires_grad]
-
+        
         optimizer = self.config.optimizer_class(
             optimizer_params,
             lr=self.config.learning_rate,
             **self.config.optimizer_params
         )
-
+        optimizer = torch.optim.SGD(optimizer_params, lr=0.01, momentum=0.9, weight_decay=1e-4)
         scheduler = None
         if self.config.scheduler_class:
             scheduler = self.config.scheduler_class(optimizer, **self.config.scheduler_params)
-
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
         loss_func = self.config.loss_function
 
         # Local step training loop
