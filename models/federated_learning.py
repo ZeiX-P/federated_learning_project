@@ -601,7 +601,7 @@ class FederatedLearning:
                 )
               
 
-                local_mask = self.generate_global_mask(fisher, top_k=0.01)
+                local_mask = self.generate_mask(fisher, top_k=0.01)
                 dict_client_masks[client_id] = local_mask
                 wandb.log({
                     f"client_{client_id}/mask_sparsity": sum(1 for v in local_mask.values() if v.sum() == 0) / len(local_mask),
@@ -886,7 +886,7 @@ class FederatedLearning:
         return aggregated
 
 
-    def generate_global_mask(self,fisher_info, top_k: float = 0.1, strategy: str = "fisher_left_only"):
+    def generate_mask(self,fisher_info, top_k: float = 0.1, strategy: str = "fisher_left_only"):
         if strategy.startswith("fisher"):
             all_scores = torch.cat([f.view(-1) for f in fisher_info.values()])
             
