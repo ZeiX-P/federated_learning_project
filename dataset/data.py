@@ -91,25 +91,104 @@ class Dataset: # Keeping the class name as 'Dataset' as per your provided code
         return federated_datasets
 
     def idd_split(self, dataset: Dataset, num_clients: int, seed: int = 42) -> Dict[int, List[int]]:
-        """
-        Create a list of indices for each client (IID split).
-        Returns: Dict with integer keys.
-        """
-        # Set seeds for reproducibility
-        np.random.seed(seed)
-        random.seed(seed)
+            """
+            Create a list of indices for each client (IID split).
+            Returns: Dict with integer keys.
+            """
+            # Set seeds for reproducibility
+            np.random.seed(seed)
+            random.seed(seed)
+            
+            indices_clients = {i: [] for i in range(num_clients)}
+            indices = list(range(len(dataset)))
+            
+            np.random.shuffle(indices)
+            
+            # Distribute indices round-robin style for perfect balance
+            for idx, data_idx in enumerate(indices):
+                client_id = idx % num_clients
+                indices_clients[client_id].append(data_idx)
+
+            self._validate_iid_split(dataset, indices_clients, num_clients)
+            
+            return indices_clients
         
-        indices_clients = {i: [] for i in range(num_clients)}
-        indices = list(range(len(dataset)))
+    def _validate_iid_split(self, dataset, indices_clients, num_clients):
+        """Validate that the IID split maintains class distribution"""
         
-        np.random.shuffle(indices)
+        logging.info("Starting IID split validation")
         
-        # Distribute indices round-robin style for perfect balance
-        for idx, data_idx in enumerate(indices):
-            client_id = idx % num_clients
-            indices_clients[client_id].append(data_idx)
+        # Get labels for the dataset
+        if hasattr(dataset, 'targets'):
+            labels = dataset.targets
+            logging.debug("Using dataset.targets for labels")
+        elif hasattr(dataset, 'labels'):
+            labels = dataset.labels
+            logging.debug("Using dataset.labels for labels")
+        else:
+            # For custom datasets, you might need to extract labels differently
+            labels = [dataset[i][1] for i in range(len(dataset))]
+            logging.debug("Extracting labels from dataset items")
         
-        return indices_clients
+        labels = np.array(labels)
+        
+        # Overall class distribution
+        unique_classes, overall_counts = np.unique(labels, return_counts=True)
+        overall_dist = overall_counts / len(labels)
+        
+        class_dist_str = ", ".join([f"Class {cls}: {dist:.3f}" 
+                                for cls, dist in zip(unique_classes, overall_dist)])
+        logging.info(f"Overall class distribution: {class_dist_str}")
+        
+        # Check each client's distribution
+        max_deviation = 0
+        deviations = []
+        
+        for client_id in range(num_clients):
+            client_labels = labels[indices_clients[client_id]]
+            client_unique, client_counts = np.unique(client_labels, return_counts=True)
+            client_dist = client_counts / len(client_labels)
+            
+            # Calculate deviation from overall distribution
+            deviation = 0
+            for cls in unique_classes:
+                if len(overall_dist) > 0:
+                    overall_prop = overall_dist[unique_classes == cls][0]
+                else:
+                    overall_prop = 0
+                client_prop = client_dist[client_unique == cls][0] if cls in client_unique else 0
+                deviation += abs(overall_prop - client_prop)
+            
+            deviations.append(deviation)
+            max_deviation = max(max_deviation, deviation)
+            
+            # Log detailed info for first few clients
+            if client_id < 3:
+                client_dist_str = ", ".join([f"Class {cls}: {dist:.3f}" 
+                                        for cls, dist in zip(client_unique, client_dist)])
+                logging.info(f"Client {client_id}: {len(client_labels)} samples, "
+                        f"distribution: [{client_dist_str}], deviation: {deviation:.4f}")
+        
+        # Summary statistics
+        mean_deviation = np.mean(deviations)
+        std_deviation = np.std(deviations)
+        
+        logging.info(f"Deviation statistics - Max: {max_deviation:.4f}, "
+                f"Mean: {mean_deviation:.4f}, Std: {std_deviation:.4f}")
+        
+        # Log first 5 client sizes for verification
+        first_5_sizes = [len(indices_clients[i]) for i in range(min(5, num_clients))]
+        logging.info(f"First 5 client data sizes: {first_5_sizes}")
+        
+        # Quality assessment
+        if max_deviation < 0.1:
+            logging.info("✓ IID split quality: EXCELLENT (max deviation < 0.1)")
+        elif max_deviation < 0.2:
+            logging.warning("⚠ IID split quality: GOOD (max deviation < 0.2)")
+        else:
+            logging.error(f"✗ IID split quality: POOR (max deviation = {max_deviation:.4f})")
+        
+        logging.info("IID split validation completed")
 
    
     def dirichlet_non_iid_split(self, dataset: Dataset, num_clients: int, alpha: float = 0.5, seed: int = 42) -> Dict[int, List[int]]:
