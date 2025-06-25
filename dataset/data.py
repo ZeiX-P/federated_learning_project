@@ -482,48 +482,151 @@ class Dataset: # Keeping the class name as 'Dataset' as per your provided code
         return client_indices
 
 # Optional: Add this method to your Dataset class for better debugging
-    def validate_client_data_distribution(self, dict_client_data):
-        """
-        Validate and print information about client data distribution
-        """
-        print("\n=== Client Data Distribution Analysis ===")
+    def _validate_iid_split(self, dataset, indices_clients, num_clients):
+        """Validate that the IID split maintains class distribution"""
         
-        total_samples = 0
-        class_distribution = defaultdict(lambda: defaultdict(int))
+        # Get labels for the dataset
+        if hasattr(dataset, 'targets'):
+            labels = dataset.targets
+        elif hasattr(dataset, 'labels'):
+            labels = dataset.labels
+        else:
+            # For custom datasets, you might need to extract labels differently
+            labels = [dataset[i][1] for i in range(len(dataset))]
         
-        for client_id, client_dataset in dict_client_data.items():
-            client_size = len(client_dataset)
-            total_samples += client_size
+        labels = np.array(labels)
+        
+        # Overall class distribution
+        unique_classes, overall_counts = np.unique(labels, return_counts=True)
+        overall_dist = overall_counts / len(labels)
+        
+        # Log overall class distribution
+        overall_dist_dict = {f"data_split/overall_class_{cls}_proportion": float(dist) 
+                            for cls, dist in zip(unique_classes, overall_dist)}
+        wandb.log(overall_dist_dict)
+        
+        # Check each client's distribution
+        deviations = []
+        
+        for client_id in range(num_clients):
+            client_labels = labels[indices_clients[client_id]]
+            client_unique, client_counts = np.unique(client_labels, return_counts=True)
+            client_dist = client_counts / len(client_labels)
             
-            # Analyze class distribution
-            if hasattr(client_dataset, 'indices') and hasattr(client_dataset.dataset, 'targets'):
-                try:
-                    # Get labels for this client's data
-                    indices = client_dataset.indices
-                    if hasattr(client_dataset.dataset, 'dataset'):
-                        # Handle nested Subset (train/val split from original dataset)
-                        base_targets = client_dataset.dataset.dataset.targets
-                        subset_indices = client_dataset.dataset.indices
-                        targets = [base_targets[subset_indices[i]] for i in indices]
-                    else:
-                        targets = [client_dataset.dataset.targets[i] for i in indices]
-                    
-                    # Count classes
-                    for target in targets:
-                        class_distribution[client_id][target] += 1
-                        
-                except Exception as e:
-                    print(f"Could not analyze client {client_id}: {e}")
+            # Calculate deviation from overall distribution
+            deviation = 0
+            client_class_dist = {}
+            
+            for cls in unique_classes:
+                overall_prop = overall_dist[unique_classes == cls][0]
+                client_prop = client_dist[client_unique == cls][0] if cls in client_unique else 0
+                deviation += abs(overall_prop - client_prop)
+                client_class_dist[f"data_split/client_{client_id}_class_{cls}_proportion"] = float(client_prop)
+            
+            deviations.append(deviation)
+            
+            # Log individual client stats (for first few clients to avoid clutter)
+            if client_id < min(10, num_clients):  # Log first 10 clients
+                log_dict = {
+                    f"data_split/client_{client_id}_size": len(client_labels),
+                    f"data_split/client_{client_id}_deviation": float(deviation),
+                }
+                log_dict.update(client_class_dist)
+                wandb.log(log_dict)
         
-        print(f"Total samples distributed: {total_samples}")
+        # Summary statistics
+        max_deviation = float(max(deviations))
+        mean_deviation = float(np.mean(deviations))
+        std_deviation = float(np.std(deviations))
         
-        # Print per-client class distribution
-        for client_id in sorted(class_distribution.keys()):
-            class_counts = class_distribution[client_id]
-            print(f"Client {client_id}: {dict(sorted(class_counts.items()))}")
+        # Log deviation statistics
+        wandb.log({
+            "data_split/deviation_max": max_deviation,
+            "data_split/deviation_mean": mean_deviation,
+            "data_split/deviation_std": std_deviation,
+            "data_split/num_classes": len(unique_classes)
+        })
         
-        return class_distribution
-   
+        # Create visualization data for wandb
+        deviation_data = [[i, float(dev)] for i, dev in enumerate(deviations)]
+        deviation_table = wandb.Table(data=deviation_data, columns=["client_id", "deviation"])
+        
+        # Log deviation distribution plot
+        wandb.log({
+            "data_split/client_deviations": wandb.plot.scatter(
+                deviation_table, "client_id", "deviation",
+                title="Client Deviation from Overall Distribution"
+            )
+        })
+        
+        # Create class distribution heatmap data
+        if num_clients <= 50:  # Only create heatmap for reasonable number of clients
+            heatmap_data = []
+            for client_id in range(num_clients):
+                client_labels = labels[indices_clients[client_id]]
+                for cls in unique_classes:
+                    client_prop = float(np.sum(client_labels == cls) / len(client_labels))
+                    heatmap_data.append([client_id, int(cls), client_prop])
+            
+            heatmap_table = wandb.Table(data=heatmap_data, columns=["client", "class", "proportion"])
+            wandb.log({
+                "data_split/class_distribution_heatmap": wandb.plot.scatter(
+                    heatmap_table, "client", "class", 
+                    c="proportion",
+                    title="Class Distribution Across Clients"
+                )
+            })
+        
+        # Quality assessment
+        if max_deviation < 0.1:
+            quality = "EXCELLENT"
+            quality_score = 1.0
+        elif max_deviation < 0.2:
+            quality = "GOOD"
+            quality_score = 0.8
+        elif max_deviation < 0.3:
+            quality = "FAIR"
+            quality_score = 0.6
+        else:
+            quality = "POOR"
+            quality_score = 0.4
+        
+        wandb.log({
+            "data_split/quality_assessment": quality,
+            "data_split/quality_score": quality_score
+        })
+        
+        # Log summary statistics - Split into numeric and text tables
+        numeric_summary_data = [
+            ["Total Samples", len(dataset)],
+            ["Number of Clients", num_clients],
+            ["Number of Classes", len(unique_classes)],
+            ["Max Deviation", max_deviation],
+            ["Mean Deviation", mean_deviation],
+            ["Quality Score", quality_score]
+        ]
+        numeric_summary_table = wandb.Table(data=numeric_summary_data, columns=["Metric", "Value"])
+        wandb.log({"data_split/numeric_summary": numeric_summary_table})
+        
+        # Text summary for quality assessment
+        text_summary_data = [
+            ["Quality Assessment", quality],
+            ["Split Type", "IID"],
+           
+        ]
+        text_summary_table = wandb.Table(data=text_summary_data, columns=["Metric", "Value"])
+        wandb.log({"data_split/text_summary": text_summary_table})
+        
+        # Alternative: Log summary as a simple dictionary instead of tables
+        wandb.log({
+            "data_split/summary/total_samples": len(dataset),
+            "data_split/summary/num_clients": num_clients,
+            "data_split/summary/num_classes": len(unique_classes),
+            "data_split/summary/max_deviation": max_deviation,
+            "data_split/summary/mean_deviation": mean_deviation,
+            "data_split/summary/quality": quality,
+            "data_split/summary/quality_score": quality_score
+        })
    
     def non_iid_split_by_class_dataset(self, dataset: Dataset, num_clients: int, num_classes_per_client: int = 2, samples_per_class_shard: int = 10, seed: int = 42) -> Dict[int, List[int]]:
         """
