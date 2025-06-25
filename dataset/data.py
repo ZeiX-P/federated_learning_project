@@ -91,27 +91,27 @@ class Dataset: # Keeping the class name as 'Dataset' as per your provided code
         return federated_datasets
 
     def idd_split(self, dataset: Dataset, num_clients: int, seed: int = 42) -> Dict[int, List[int]]:
-            """
-            Create a list of indices for each client (IID split).
-            Returns: Dict with integer keys.
-            """
-            # Set seeds for reproducibility
-            np.random.seed(seed)
-            random.seed(seed)
-            
-            indices_clients = {i: [] for i in range(num_clients)}
-            indices = list(range(len(dataset)))
-            
-            np.random.shuffle(indices)
-            
-            # Distribute indices round-robin style for perfect balance
-            for idx, data_idx in enumerate(indices):
-                client_id = idx % num_clients
-                indices_clients[client_id].append(data_idx)
+        """
+        Create a list of indices for each client (IID split).
+        Returns: Dict with integer keys.
+        """
+        # Set seeds for reproducibility
+        np.random.seed(seed)
+        random.seed(seed)
+        
+        indices_clients = {i: [] for i in range(num_clients)}
+        indices = list(range(len(dataset)))
+        
+        np.random.shuffle(indices)
+        
+        # Distribute indices round-robin style for perfect balance
+        for idx, data_idx in enumerate(indices):
+            client_id = idx % num_clients
+            indices_clients[client_id].append(data_idx)
 
-            self._validate_iid_split(dataset, indices_clients, num_clients)
-            
-            return indices_clients
+        self._validate_iid_split(dataset, indices_clients, num_clients)
+        
+        return indices_clients
         
     
     
