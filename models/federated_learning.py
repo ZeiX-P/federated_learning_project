@@ -46,6 +46,9 @@ class FederatedLearning:
         self.class_per_client = class_per_client
         self.local_steps = local_steps
 
+
+
+
         if torch.cuda.is_available():
             self.device = torch.device('cuda')
             self.global_model.to(self.device)
@@ -55,27 +58,7 @@ class FederatedLearning:
             self.device = torch.device('cpu')
             self.global_model.to(self.device)
 
-        self.local_models = {i: copy.deepcopy(self.global_model).to(self.device) for i in range(self.num_clients)}
-        self.global_train_set, self.global_val_set, self.dict_train_client_data, self.dict_val_client_data = self.d()
-        
-        # Check client dataset sizes - this helps diagnose data distribution issues
-        for client_id in range(self.num_clients):
-            train_size = len(self.dict_train_client_data[client_id])
-            val_size = len(self.dict_val_client_data[client_id])
-            print(f"Client {client_id}: {train_size} training samples, {val_size} validation samples")
-            
-                # Check class distribution for classification tasks
-            try:
-                if hasattr(self.dict_train_client_data[client_id].dataset, 'targets'):
-                    indices = self.dict_train_client_data[client_id].indices
-                    targets = [self.dict_train_client_data[client_id].dataset.targets[i] for i in indices]
-                    classes, counts = torch.unique(torch.tensor(targets), return_counts=True)
-                    print(f"Client {client_id} class distribution: {dict(zip(classes.tolist(), counts.tolist()))}")
-            except Exception as e:
-                print(f"Could not analyze class distribution for client {client_id}: {e}")
 
-        # Initialise wandb with more detailed configuration
-       
         run_name = f"{self.distribution_type}_local_steps_{self.local_steps}_class_per_client{self.class_per_client}"
         wandb.init(
             project=self.config.training_name, 
@@ -98,6 +81,25 @@ class FederatedLearning:
         )
         # Log the model architecture
         wandb.watch(self.global_model)
+
+        self.local_models = {i: copy.deepcopy(self.global_model).to(self.device) for i in range(self.num_clients)}
+        self.global_train_set, self.global_val_set, self.dict_train_client_data, self.dict_val_client_data = self.d()
+        
+        # Check client dataset sizes - this helps diagnose data distribution issues
+        for client_id in range(self.num_clients):
+            train_size = len(self.dict_train_client_data[client_id])
+            val_size = len(self.dict_val_client_data[client_id])
+            print(f"Client {client_id}: {train_size} training samples, {val_size} validation samples")
+            
+                # Check class distribution for classification tasks
+            try:
+                if hasattr(self.dict_train_client_data[client_id].dataset, 'targets'):
+                    indices = self.dict_train_client_data[client_id].indices
+                    targets = [self.dict_train_client_data[client_id].dataset.targets[i] for i in indices]
+                    classes, counts = torch.unique(torch.tensor(targets), return_counts=True)
+                    print(f"Client {client_id} class distribution: {dict(zip(classes.tolist(), counts.tolist()))}")
+            except Exception as e:
+                print(f"Could not analyze class distribution for client {client_id}: {e}")
 
    
         
