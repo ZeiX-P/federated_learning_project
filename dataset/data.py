@@ -113,7 +113,7 @@ class Dataset: # Keeping the class name as 'Dataset' as per your provided code
             indices_clients[client_id].append(data_idx)
         '''
 
-        self._validate_iid_split(dataset, indices_clients, num_clients)
+        
         
         return indices_clients
         
