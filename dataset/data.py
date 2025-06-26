@@ -103,11 +103,15 @@ class Dataset: # Keeping the class name as 'Dataset' as per your provided code
         indices = list(range(len(dataset)))
         
         np.random.shuffle(indices)
-        
+        for i in range(len(dataset)):
+            client_id = i % num_clients
+            indices_clients[client_id].append(indices[i])
         # Distribute indices round-robin style for perfect balance
+        '''
         for idx, data_idx in enumerate(indices):
             client_id = idx % num_clients
             indices_clients[client_id].append(data_idx)
+        '''
 
         self._validate_iid_split(dataset, indices_clients, num_clients)
         
