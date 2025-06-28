@@ -59,28 +59,7 @@ class FederatedLearning:
             self.global_model.to(self.device)
 
 
-        run_name = f"{self.distribution_type}_local_steps_{self.local_steps}_class_per_client{self.class_per_client}"
-        wandb.init(
-            project=self.config.training_name, 
-            name=run_name,
-            config={
-                "aggregation_method": self.aggregation_method,
-                "distribution_type": self.distribution_type,
-                "num_clients": self.num_clients,
-                "num_rounds": self.num_rounds,
-                "epochs_per_round": self.epochs_per_round,
-                "batch_size": self.config.batch_size,
-                "learning_rate": self.config.learning_rate,
-                "momentum": self.config.momentum,
-                "weight_decay": self.config.weight_decay,
-                "client_fraction": self.client_fraction,
-                "dataset": self.config.dataset,
-                "class_per_client": self.class_per_client,
-                "local_steps": self.local_steps,
-            }
-        )
-        # Log the model architecture
-        wandb.watch(self.global_model)
+        
 
         self.local_models = {i: copy.deepcopy(self.global_model).to(self.device) for i in range(self.num_clients)}
         self.global_train_set, self.global_val_set, self.dict_train_client_data, self.dict_val_client_data = self.d()
@@ -517,6 +496,30 @@ class FederatedLearning:
     
 
     def run_federated_learning(self):
+
+        run_name = f"{self.distribution_type},local_steps:{self.local_steps},class_per_client:{self.class_per_client}"
+        wandb.init(
+            project=self.config.training_name, 
+            name=run_name,
+            config={
+                "aggregation_method": self.aggregation_method,
+                "distribution_type": self.distribution_type,
+                "num_clients": self.num_clients,
+                "num_rounds": self.num_rounds,
+                "epochs_per_round": self.epochs_per_round,
+                "batch_size": self.config.batch_size,
+                "learning_rate": self.config.learning_rate,
+                "momentum": self.config.momentum,
+                "weight_decay": self.config.weight_decay,
+                "client_fraction": self.client_fraction,
+                "dataset": self.config.dataset,
+                "class_per_client": self.class_per_client,
+                "local_steps": self.local_steps,
+            }
+        )
+        # Log the model architecture
+        wandb.watch(self.global_model)
+
         for round in range(self.num_rounds):
             print(f"--- Round {round+1}/{self.num_rounds} ---")
             wandb.log({"round_progress": round / self.num_rounds * 100})
@@ -564,6 +567,30 @@ class FederatedLearning:
             print(f"Round {round+1} - Global validation accuracy: {global_metrics.get('val_accuracy', 0):.2f}%")
 
     def run_model_editing_federated(self):
+
+        run_name = f"{self.distribution_type},local_steps:{self.local_steps},class_per_client:{self.class_per_client},model_editing=YES"
+        wandb.init(
+            project=self.config.training_name, 
+            name=run_name,
+            config={
+                "aggregation_method": self.aggregation_method,
+                "distribution_type": self.distribution_type,
+                "num_clients": self.num_clients,
+                "num_rounds": self.num_rounds,
+                "epochs_per_round": self.epochs_per_round,
+                "batch_size": self.config.batch_size,
+                "learning_rate": self.config.learning_rate,
+                "momentum": self.config.momentum,
+                "weight_decay": self.config.weight_decay,
+                "client_fraction": self.client_fraction,
+                "dataset": self.config.dataset,
+                "class_per_client": self.class_per_client,
+                "local_steps": self.local_steps,
+            }
+        )
+        # Log the model architecture
+        wandb.watch(self.global_model)
+
         for round in range(self.num_rounds):
             wandb.log({"round": round, "round_progress": (round + 1) / self.num_rounds * 100})
 
