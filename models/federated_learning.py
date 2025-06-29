@@ -658,7 +658,7 @@ class FederatedLearning:
         Runs the centralized training process with model editing.
         This method mirrors the structure of the federated version for comparison.
         """
-        run_name = f"Centralized,num_epochs:{self.config.num_epochs},model_editing=YES"
+        run_name = f"Centralized,lr={self.config.learning_rate},model_editing=YES"
         wandb.init(
             project=self.config.training_name,
             name=run_name,
@@ -726,7 +726,7 @@ class FederatedLearning:
         loss_func = self.config.loss_function
 
         # Step 3: Centralized Training Loop
-        for epoch in range(self.config.num_epochs):
+        for epoch in range(self.config.epochs):
             self.global_model.train() # Set model to training mode
             running_loss = 0.0
             correct_train = 0
