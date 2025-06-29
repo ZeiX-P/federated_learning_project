@@ -653,6 +653,138 @@ class FederatedLearning:
                 "global/val_accuracy": global_metrics.get("val_accuracy", 0)
             })
 
+    def run_centralized_model_editing(self,model, train_dataset, val_dataset, config):
+   
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model.to(device)
+
+        # Create DataLoaders for the entire dataset
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=config.batch_size,
+            shuffle=True
+        )
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=config.batch_size,
+            shuffle=False
+        )
+
+        run_name = f"Centralized,num_epochs:{config.num_epochs},model_editing=YES"
+        wandb.init(
+            project=config.training_name,
+            name=run_name,
+            config={
+                "training_type": "centralized",
+                "num_epochs": config.num_epochs,
+                "batch_size": config.batch_size,
+                "learning_rate": config.learning_rate,
+                "momentum": config.momentum,
+                "weight_decay": config.weight_decay,
+                "dataset": config.dataset,
+                "model_editing_top_k": config.model_editing_top_k
+            }
+        )
+        wandb.watch(model) # Watch the model for changes
+
+        print("--- Centralized Training with Model Editing ---")
+
+        # Step 1: Compute Fisher Information and generate mask for the entire dataset
+        print("Computing Fisher Information on the full training dataset...")
+        fisher_scores = self.compute_fisher_information(
+            model, train_loader, config.loss_function, device
+        )
+        print("Generating model mask...")
+        # Pass the model to generate_mask so it can handle cases with empty fisher_scores
+        model_mask = self.generate_mask(fisher_scores, model, top_k=config.model_editing_top_k)
+
+        # Log mask sparsity
+        total_params = sum(m.numel() for m in model_mask.values())
+        frozen_params = sum((m == 0).sum().item() for m in model_mask.values())
+        sparsity = frozen_params / total_params if total_params > 0 else 0
+        wandb.log({"model/mask_sparsity": sparsity})
+        print(f"Mask sparsity: {sparsity:.2f}")
+
+        # Step 2: Apply the binary mask to the global model
+        # Parameters with mask[name] == 0 will have requires_grad set to False
+        print("Applying mask to model parameters...")
+        for name, param in model.named_parameters():
+            if name in model_mask:
+                if (model_mask[name] == 0).all():
+                    param.requires_grad_(False)
+                else:
+                    param.requires_grad_(True)
+            else: # If a parameter is not in the mask, default to True (trainable)
+                # This might happen if top_k is 1.0 or if a layer has no Fisher scores
+                param.requires_grad_(True)
+
+
+        # Filter parameters by requires_grad for the optimizer
+        optimizer_params = [p for p in model.parameters() if p.requires_grad]
+        if not optimizer_params:
+            print("Warning: No parameters are set to require gradients. Model will not train.")
+            # Handle case where all parameters might be frozen, e.g., for very small top_k
+            # or if the model has no trainable params after masking.
+            # You might want to raise an error or adjust mask generation.
+
+        # Initialize optimizer and scheduler
+        optimizer = config.optimizer_class(
+            optimizer_params,
+            lr=config.learning_rate,
+            **config.optimizer_params
+        )
+        optimizer = torch.optim.SGD(optimizer_params, lr=0.001, momentum=0.9, weight_decay=1e-4)
+
+        scheduler = None
+        if config.scheduler_class:
+            scheduler = config.scheduler_class(optimizer, **config.scheduler_params)
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
+        loss_func = config.loss_function
+
+        # Step 3: Centralized Training Loop
+        for epoch in range(config.num_epochs):
+            model.train() # Set model to training mode
+            running_loss = 0.0
+            correct_train = 0
+            total_train = 0
+
+            for batch_idx, (inputs, targets) in enumerate(train_loader):
+                inputs, targets = inputs.to(device), targets.to(device)
+
+                optimizer.zero_grad()
+                preds = model(inputs)
+                loss = loss_func(preds, targets)
+                loss.backward()
+                optimizer.step()
+
+                running_loss += loss.item() * targets.size(0)
+                _, predicted = preds.max(1)
+                total_train += targets.size(0)
+                correct_train += predicted.eq(targets).sum().item()
+
+            train_loss = running_loss / total_train
+            train_accuracy = 100.0 * correct_train / total_train
+
+            if scheduler is not None:
+                scheduler.step()
+
+            # Step 4: Evaluate and log metrics
+            val_metrics = self.evaluate_model(model, val_loader, loss_func, device)
+
+            wandb.log({
+                "epoch": epoch,
+                "centralized/train_loss": train_loss,
+                "centralized/train_accuracy": train_accuracy,
+                "centralized/val_loss": val_metrics["loss"],
+                "centralized/val_accuracy": val_metrics["accuracy"],
+                "centralized/learning_rate": optimizer.param_groups[0]['lr']
+            })
+            print(f"Epoch {epoch+1}/{config.num_epochs} - "
+                f"Train Loss: {train_loss:.4f}, Train Acc: {train_accuracy:.2f}% | "
+                f"Val Loss: {val_metrics['loss']:.4f}, Val Acc: {val_metrics['accuracy']:.2f}%")
+
+        wandb.finish()
+        print("--- Centralized Training Completed ---")
 
     def train_with_global_mask_epochs(self, model, train_loader, val_loader, client_id, round, mask):
         # Apply the binary mask using requires_grad
@@ -880,43 +1012,7 @@ class FederatedLearning:
             for name, score, shape in zip(param_names, split_scores, param_shapes)
         }
 
-    def adaptive_merge(self, dict_updates, dict_masks, dict_signatures, conflict_threshold=0.1):
-    
-
-        aggregated = {}
-        param_updates = defaultdict(list)
-
-        # Step 1: Collect updates per parameter
-        for client_id in dict_updates:
-            update = dict_updates[client_id]
-            mask = dict_masks[client_id]
-
-            for name, delta in update.items():
-                if name in mask:
-                    masked_delta = delta * mask[name]
-                    param_updates[name].append(masked_delta)
-
-        # Step 2: Aggregate with conflict analysis
-        for name, updates in param_updates.items():
-            if len(updates) == 1:
-                aggregated[name] = updates[0]
-            else:
-                stacked = torch.stack(updates)
-                # Conflict score = variance of updates across clients
-                conflict_score = torch.var(stacked, dim=0).mean().item()
-
-                if conflict_score < conflict_threshold:
-                    # Low conflict → mean
-                    aggregated[name] = torch.mean(stacked, dim=0)
-                else:
-                    # High conflict → robust aggregation (median or discard)
-                    # Option A: median
-                    aggregated[name] = torch.median(stacked, dim=0).values
-                    # Option B: freeze param
-                    # aggregated[name] = torch.zeros_like(stacked[0])
-        return aggregated
-
-
+   
     def generate_mask(self,fisher_info, top_k: float = 0.1, strategy: str = "fisher_left_only"):
         if strategy.startswith("fisher"):
             all_scores = torch.cat([f.view(-1) for f in fisher_info.values()])
