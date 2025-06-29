@@ -653,7 +653,7 @@ class FederatedLearning:
                 "global/val_accuracy": global_metrics.get("val_accuracy", 0)
             })
 
-    def run_centralized_model_editing(self):
+    def run_centralized_model_editing(self,top_k):
         """
         Runs the centralized training process with model editing.
         This method mirrors the structure of the federated version for comparison.
@@ -664,13 +664,13 @@ class FederatedLearning:
             name=run_name,
             config={
                 "training_type": "centralized",
-                "num_epochs": self.config.num_epochs,
+                "num_epochs": self.config.epochs,
                 "batch_size": self.config.batch_size,
                 "learning_rate": self.config.learning_rate,
                 "momentum": self.config.momentum,
                 "weight_decay": self.config.weight_decay,
                 "dataset": self.config.dataset,
-                "model_editing_top_k": self.config.model_editing_top_k # Reintroduced for model editing
+                "model_editing_top_k": top_k # Reintroduced for model editing
             }
         )
         wandb.watch(self.global_model) # Watch the global model (which is self.model)
@@ -684,7 +684,7 @@ class FederatedLearning:
             self.global_model, self.train_loader, self.config.loss_function
         )
         print("Generating model mask...")
-        model_mask = self.generate_mask(fisher_scores, top_k=self.config.model_editing_top_k)
+        model_mask = self.generate_mask(fisher_scores, top_k=top_k)
 
         # Log mask sparsity
         total_params = sum(m.numel() for m in model_mask.values())
