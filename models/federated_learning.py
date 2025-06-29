@@ -653,7 +653,7 @@ class FederatedLearning:
                 "global/val_accuracy": global_metrics.get("val_accuracy", 0)
             })
 
-    def run_centralized_model_editing(self,top_k,train_loader,val_loader):
+    def run_centralized_model_editing(self,train_loader,val_loader,top_k):
         """
         Runs the centralized training process with model editing.
         This method mirrors the structure of the federated version for comparison.
