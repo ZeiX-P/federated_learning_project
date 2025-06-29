@@ -756,8 +756,8 @@ class FederatedLearning:
             val_metrics = self.evaluate_model(self.global_model, val_loader)
 
             wandb.log({
-                "global/val_loss": val_metrics["loss"],
-                "global/val_accuracy": val_metrics["accuracy"]
+                "global/val_loss": val_metrics["val_loss"],
+                "global/val_accuracy": val_metrics.get("val_accuracy", 0)
             })
         wandb.finish()
         print("--- Centralized Training Completed ---")
