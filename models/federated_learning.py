@@ -653,7 +653,7 @@ class FederatedLearning:
                 "global/val_accuracy": global_metrics.get("val_accuracy", 0)
             })
 
-    def run_centralized_model_editing(self,top_k):
+    def run_centralized_model_editing(self,top_k,train_loader,val_loader):
         """
         Runs the centralized training process with model editing.
         This method mirrors the structure of the federated version for comparison.
@@ -681,7 +681,7 @@ class FederatedLearning:
         # This is done ONCE at the beginning for the centralized model
         print("Computing Fisher Information on the full training dataset...")
         fisher_scores = self.compute_fisher_information(
-            self.global_model, self.train_loader, self.config.loss_function
+            self.global_model, train_loader, self.config.loss_function
         )
         print("Generating model mask...")
         model_mask = self.generate_mask(fisher_scores, top_k=top_k)
@@ -732,7 +732,7 @@ class FederatedLearning:
             correct_train = 0
             total_train = 0
 
-            for batch_idx, (inputs, targets) in enumerate(self.train_loader):
+            for batch_idx, (inputs, targets) in enumerate(train_loader):
                 inputs, targets = inputs.to(self.device), targets.to(self.device)
 
                 optimizer.zero_grad()
@@ -753,7 +753,7 @@ class FederatedLearning:
                 scheduler.step()
 
             # Step 4: Evaluate and log metrics
-            val_metrics = self.evaluate_model(self.global_model, self.val_loader)
+            val_metrics = self.evaluate_model(self.global_model, val_loader)
 
             wandb.log({
                 "global/val_loss": val_metrics["loss"],
