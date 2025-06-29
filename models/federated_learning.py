@@ -653,50 +653,38 @@ class FederatedLearning:
                 "global/val_accuracy": global_metrics.get("val_accuracy", 0)
             })
 
-    def run_centralized_model_editing(self,model, train_dataset, val_dataset, config):
-   
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model.to(device)
-
-        # Create DataLoaders for the entire dataset
-        train_loader = DataLoader(
-            train_dataset,
-            batch_size=config.batch_size,
-            shuffle=True
-        )
-        val_loader = DataLoader(
-            val_dataset,
-            batch_size=config.batch_size,
-            shuffle=False
-        )
-
-        run_name = f"Centralized,num_epochs:{config.num_epochs},model_editing=YES"
+    def run_centralized_model_editing(self):
+        """
+        Runs the centralized training process with model editing.
+        This method mirrors the structure of the federated version for comparison.
+        """
+        run_name = f"Centralized,num_epochs:{self.config.num_epochs},model_editing=YES"
         wandb.init(
-            project=config.training_name,
+            project=self.config.training_name,
             name=run_name,
             config={
                 "training_type": "centralized",
-                "num_epochs": config.num_epochs,
-                "batch_size": config.batch_size,
-                "learning_rate": config.learning_rate,
-                "momentum": config.momentum,
-                "weight_decay": config.weight_decay,
-                "dataset": config.dataset,
-                "model_editing_top_k": config.model_editing_top_k
+                "num_epochs": self.config.num_epochs,
+                "batch_size": self.config.batch_size,
+                "learning_rate": self.config.learning_rate,
+                "momentum": self.config.momentum,
+                "weight_decay": self.config.weight_decay,
+                "dataset": self.config.dataset,
+                "model_editing_top_k": self.config.model_editing_top_k # Reintroduced for model editing
             }
         )
-        wandb.watch(model) # Watch the model for changes
+        wandb.watch(self.global_model) # Watch the global model (which is self.model)
 
         print("--- Centralized Training with Model Editing ---")
 
         # Step 1: Compute Fisher Information and generate mask for the entire dataset
+        # This is done ONCE at the beginning for the centralized model
         print("Computing Fisher Information on the full training dataset...")
         fisher_scores = self.compute_fisher_information(
-            model, train_loader, config.loss_function, device
+            self.global_model, self.train_loader, self.config.loss_function
         )
         print("Generating model mask...")
-        # Pass the model to generate_mask so it can handle cases with empty fisher_scores
-        model_mask = self.generate_mask(fisher_scores, model, top_k=config.model_editing_top_k)
+        model_mask = self.generate_mask(fisher_scores, top_k=self.config.model_editing_top_k)
 
         # Log mask sparsity
         total_params = sum(m.numel() for m in model_mask.values())
@@ -708,51 +696,47 @@ class FederatedLearning:
         # Step 2: Apply the binary mask to the global model
         # Parameters with mask[name] == 0 will have requires_grad set to False
         print("Applying mask to model parameters...")
-        for name, param in model.named_parameters():
+        for name, param in self.global_model.named_parameters():
             if name in model_mask:
                 if (model_mask[name] == 0).all():
                     param.requires_grad_(False)
                 else:
                     param.requires_grad_(True)
             else: # If a parameter is not in the mask, default to True (trainable)
-                # This might happen if top_k is 1.0 or if a layer has no Fisher scores
                 param.requires_grad_(True)
 
 
         # Filter parameters by requires_grad for the optimizer
-        optimizer_params = [p for p in model.parameters() if p.requires_grad]
+        optimizer_params = [p for p in self.global_model.parameters() if p.requires_grad]
         if not optimizer_params:
             print("Warning: No parameters are set to require gradients. Model will not train.")
-            # Handle case where all parameters might be frozen, e.g., for very small top_k
-            # or if the model has no trainable params after masking.
-            # You might want to raise an error or adjust mask generation.
+            # Adjust mask generation or raise an error as needed if this state is unexpected
 
-        # Initialize optimizer and scheduler
-        optimizer = config.optimizer_class(
+        # Initialize optimizer and scheduler for the masked model
+        optimizer = self.config.optimizer_class(
             optimizer_params,
-            lr=config.learning_rate,
-            **config.optimizer_params
+            lr=self.config.learning_rate,
+            **self.config.optimizer_params
         )
         optimizer = torch.optim.SGD(optimizer_params, lr=0.001, momentum=0.9, weight_decay=1e-4)
-
         scheduler = None
-        if config.scheduler_class:
-            scheduler = config.scheduler_class(optimizer, **config.scheduler_params)
+        if self.config.scheduler_class:
+            scheduler = self.config.scheduler_class(optimizer, **self.config.scheduler_params)
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
-        loss_func = config.loss_function
+        loss_func = self.config.loss_function
 
         # Step 3: Centralized Training Loop
-        for epoch in range(config.num_epochs):
-            model.train() # Set model to training mode
+        for epoch in range(self.config.num_epochs):
+            self.global_model.train() # Set model to training mode
             running_loss = 0.0
             correct_train = 0
             total_train = 0
 
-            for batch_idx, (inputs, targets) in enumerate(train_loader):
-                inputs, targets = inputs.to(device), targets.to(device)
+            for batch_idx, (inputs, targets) in enumerate(self.train_loader):
+                inputs, targets = inputs.to(self.device), targets.to(self.device)
 
                 optimizer.zero_grad()
-                preds = model(inputs)
+                preds = self.global_model(inputs)
                 loss = loss_func(preds, targets)
                 loss.backward()
                 optimizer.step()
@@ -769,20 +753,12 @@ class FederatedLearning:
                 scheduler.step()
 
             # Step 4: Evaluate and log metrics
-            val_metrics = self.evaluate_model(model, val_loader, loss_func, device)
+            val_metrics = self.evaluate_model(self.global_model, self.val_loader)
 
             wandb.log({
-                "epoch": epoch,
-                "centralized/train_loss": train_loss,
-                "centralized/train_accuracy": train_accuracy,
-                "centralized/val_loss": val_metrics["loss"],
-                "centralized/val_accuracy": val_metrics["accuracy"],
-                "centralized/learning_rate": optimizer.param_groups[0]['lr']
+                "global/val_loss": val_metrics["loss"],
+                "global/val_accuracy": val_metrics["accuracy"]
             })
-            print(f"Epoch {epoch+1}/{config.num_epochs} - "
-                f"Train Loss: {train_loss:.4f}, Train Acc: {train_accuracy:.2f}% | "
-                f"Val Loss: {val_metrics['loss']:.4f}, Val Acc: {val_metrics['accuracy']:.2f}%")
-
         wandb.finish()
         print("--- Centralized Training Completed ---")
 
