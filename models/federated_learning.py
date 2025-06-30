@@ -753,7 +753,7 @@ class FederatedLearning:
                 scheduler.step()
 
             # Step 4: Evaluate and log metrics
-            val_metrics = self.evaluate_global_model(self.global_model, val_loader)
+            val_metrics = self.evaluate_global_model()
 
             wandb.log({
                 "global/val_loss": val_metrics["val_loss"],
