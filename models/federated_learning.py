@@ -685,7 +685,7 @@ class FederatedLearning:
         )
         print("Generating model mask...")
         model_mask = self.generate_mask(fisher_scores, top_k=top_k)
-
+        
         # Log mask sparsity
         total_params = sum(m.numel() for m in model_mask.values())
         frozen_params = sum((m == 0).sum().item() for m in model_mask.values())
@@ -705,7 +705,7 @@ class FederatedLearning:
             else: # If a parameter is not in the mask, default to True (trainable)
                 param.requires_grad_(True)
 
-
+        print("Mask applied. Parameters ready for training.")
         # Filter parameters by requires_grad for the optimizer
         optimizer_params = [p for p in self.global_model.parameters() if p.requires_grad]
         if not optimizer_params:
@@ -748,12 +748,12 @@ class FederatedLearning:
 
             train_loss = running_loss / total_train
             train_accuracy = 100.0 * correct_train / total_train
-
+      
             if scheduler is not None:
                 scheduler.step()
 
             # Step 4: Evaluate and log metrics
-            val_metrics = self.evaluate_model(self.global_model, val_loader)
+            val_metrics = self.evaluate_global_model(self.global_model, val_loader)
 
             wandb.log({
                 "global/val_loss": val_metrics["val_loss"],
@@ -814,7 +814,7 @@ class FederatedLearning:
 
             train_loss = running_loss / total
             train_accuracy = 100.0 * correct / total
-
+      
             if scheduler is not None:
                 scheduler.step()
 
