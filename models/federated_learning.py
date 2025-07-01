@@ -673,7 +673,7 @@ class FederatedLearning:
                 "model_editing_top_k": top_k # Reintroduced for model editing
             }
         )
-        wandb.watch(self.global_model) # Watch the global model (which is self.model)
+        #wandb.watch(self.global_model) # Watch the global model (which is self.model)
 
         print("--- Centralized Training with Model Editing ---")
 
