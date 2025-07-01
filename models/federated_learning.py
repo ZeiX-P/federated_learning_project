@@ -726,7 +726,7 @@ class FederatedLearning:
         loss_func = self.config.loss_function
 
         # Step 3: Centralized Training Loop
-        for epoch in range(self.config.epochs):
+        for epoch in range(1, self.config.epochs + 1):
             self.global_model.train() # Set model to training mode
             running_loss = 0.0
             correct_train = 0
@@ -756,6 +756,7 @@ class FederatedLearning:
             val_metrics = self.evaluate_global_model()
 
             wandb.log({
+                "Epoch": epoch,
                 "global/val_loss": val_metrics["val_loss"],
                 "global/val_accuracy": val_metrics.get("val_accuracy", 0)
             })
