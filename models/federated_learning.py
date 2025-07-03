@@ -566,7 +566,7 @@ class FederatedLearning:
 
             print(f"Round {round+1} - Global validation accuracy: {global_metrics.get('val_accuracy', 0):.2f}%")
 
-    def run_model_editing_federated(self):
+    def run_model_editing_federated(self, top_k=0.1):
 
         run_name = f"{self.distribution_type},local_steps:{self.local_steps},class_per_client:{self.class_per_client},model_editing=YES"
         wandb.init(
@@ -586,6 +586,7 @@ class FederatedLearning:
                 "dataset": self.config.dataset,
                 "class_per_client": self.class_per_client,
                 "local_steps": self.local_steps,
+                "model_editing_top_k": top_k 
             }
         )
         # Log the model architecture
@@ -630,7 +631,7 @@ class FederatedLearning:
                 )
               
 
-                local_mask = self.generate_mask(fisher, top_k=0.01)
+                local_mask = self.generate_mask(fisher, top_k)
                 dict_client_masks[client_id] = local_mask
                 total_params = sum(m.numel() for m in local_mask.values())
                 frozen_params = sum((m == 0).sum().item() for m in local_mask.values())
