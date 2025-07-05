@@ -566,7 +566,7 @@ class FederatedLearning:
 
             print(f"Round {round+1} - Global validation accuracy: {global_metrics.get('val_accuracy', 0):.2f}%")
 
-    def run_model_editing_federated(self, top_k=0.1):
+    def run_model_editing_federated(self, type_model_editing, top_k=0.1):
 
         run_name = f"{self.distribution_type},local_steps:{self.local_steps},class_per_client:{self.class_per_client},model_editing=YES"
         wandb.init(
@@ -586,6 +586,7 @@ class FederatedLearning:
                 "dataset": self.config.dataset,
                 "class_per_client": self.class_per_client,
                 "local_steps": self.local_steps,
+                "type_model_editing": type_model_editing,  # Added for model editing
                 "model_editing_top_k": top_k 
             }
         )
