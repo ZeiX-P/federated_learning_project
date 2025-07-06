@@ -986,7 +986,7 @@ class FederatedLearning:
         }
 
    
-    def generate_mask(self,fisher_info, strategy: str = "fisher_left_only",top_k: float = 0.1):
+    def generate_mask(self,fisher_info, strategy,top_k: float = 0.1):
         if strategy.startswith("fisher"):
             all_scores = torch.cat([f.view(-1) for f in fisher_info.values()])
             
