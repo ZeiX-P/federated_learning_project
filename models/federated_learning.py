@@ -825,12 +825,15 @@ class FederatedLearning:
 
     def train_with_global_mask_local_step(self, model, train_loader, val_loader, client_id, round, mask):
         # Apply the binary mask using requires_grad
-        for name, param in model.named_parameters():
-            if name in mask:
-                if (mask[name] == 0).all():
-                    param.requires_grad_(False)
-                else:
-                    param.requires_grad_(True)
+        with torch.no_grad(): # Operations here should not be part of the computational graph
+            for name, param in self.model.named_parameters():
+                if param.grad is not None and name in self.mask_for_training:
+                    param_mask_tensor = self.mask_for_training[name]
+
+                    # Multiply gradients by the mask.
+                    # Where mask_tensor is 1 (TRAIN), gradient remains (grad * 1).
+                    # Where mask_tensor is 0 (FREEZE), gradient becomes 0 (grad * 0).
+                    param.grad.mul_(param_mask_tensor)
 
         # Filter parameters by requires_grad
         optimizer_params = [p for p in model.parameters() if p.requires_grad]
@@ -985,45 +988,57 @@ class FederatedLearning:
             for name, score, shape in zip(param_names, split_scores, param_shapes)
         }
 
-   
-    def generate_mask(self,fisher_info, strategy,top_k: float = 0.1):
+    def generate_mask(fisher_info: dict, strategy: str, top_k: float = 0.1) -> dict:
+        """
+        Generates a binary mask based on importance scores.
+        The mask values will be 1 for parameters/elements that should be TRAINED (least important),
+        and 0 for parameters/elements that should be FROZEN (more important).
+
+        Args:
+            fisher_info (dict): A dictionary mapping parameter names to their importance scores (e.g., Fisher values).
+            strategy (str): The masking strategy to use (e.g., "fisher_left_only").
+            top_k (float): A fraction relevant to the strategy (e.g., top K% to consider).
+
+        Returns:
+            dict: A dictionary where keys are parameter names and values are binary PyTorch tensors (0s and 1s)
+                representing the mask for that parameter.
+        """
         if strategy.startswith("fisher"):
             all_scores = torch.cat([f.view(-1) for f in fisher_info.values()])
-            
-            # Use kthvalue for better memory efficiency with large tensors
             total_elements = all_scores.numel()
-            
-            if strategy == "fisher_least":
+
+            if strategy == "fisher_least" or strategy == "fisher_left_only":
+                # Goal: Identify 'top_k' fraction of LEAST important parameters/elements to TRAIN.
+                # Mask will be 1 for these (scores <= threshold), and 0 for others.
                 k = max(1, int(top_k * total_elements))
                 threshold = torch.kthvalue(all_scores, k).values
-                compare = lambda x: x <= threshold
+                compare = lambda x: x <= threshold # Returns True for LEAST important (TRAIN)
             elif strategy == "fisher_most":
+                # This strategy identifies the MOST important elements.
+                # If you wanted to *train* the MOST important, you'd use this and adjust compare.
+                # For your current goal (train LEAST important), stick to fisher_left_only.
                 k = max(1, int((1 - top_k) * total_elements))
                 threshold = torch.kthvalue(all_scores, k).values
-                compare = lambda x: x >= threshold
-            elif strategy == "fisher_left_only":
-                # New strategy: only parameters on the left side of distribution (least important)
-                # This sets mask to 1 ONLY for the leftmost top_k fraction of Fisher values
-                k = max(1, int(top_k * total_elements))
-                threshold = torch.kthvalue(all_scores, k).values
-                compare = lambda x: x <= threshold
+                compare = lambda x: x >= threshold # Returns True for MOST important (opposite of what we want for this mask)
+                # If you *still* wanted to use fisher_most but produce a mask for training LEAST important:
+                # compare = lambda x: x < threshold # 1s for elements *below* the threshold of the most important
             else:
                 raise ValueError(f"Unknown Fisher strategy: {strategy}")
-            
+
             mask = {name: compare(tensor).float() for name, tensor in fisher_info.items()}
 
         elif strategy in {"magnitude_lowest", "magnitude_highest"}:
             all_params = torch.cat([p.view(-1).abs() for p in fisher_info.values()])
             total_elements = all_params.numel()
-            
+
             if strategy == "magnitude_lowest":
                 k = max(1, int(top_k * total_elements))
                 threshold = torch.kthvalue(all_params, k).values
                 compare = lambda x: x.abs() <= threshold
-            else:
+            else: # magnitude_highest
                 k = max(1, int((1 - top_k) * total_elements))
                 threshold = torch.kthvalue(all_params, k).values
-                compare = lambda x: x.abs() >= threshold
+                compare = lambda x: x.abs() < threshold
             mask = {name: compare(p).float() for name, p in fisher_info.items()}
 
         elif strategy == "random":
