@@ -632,7 +632,7 @@ class FederatedLearning:
                 )
               
 
-                local_mask = self.generate_mask(fisher,strategy=type_model_editing, top_k)
+                local_mask = self.generate_mask(fisher,strategy=type_model_editing, top_k=top_k)
                 dict_client_masks[client_id] = local_mask
                 total_params = sum(m.numel() for m in local_mask.values())
                 frozen_params = sum((m == 0).sum().item() for m in local_mask.values())
