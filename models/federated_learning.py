@@ -632,7 +632,7 @@ class FederatedLearning:
                 )
               
 
-                local_mask = self.generate_mask(fisher,type_model_editing, top_k)
+                local_mask = self.generate_mask(fisher,strategy=type_model_editing, top_k)
                 dict_client_masks[client_id] = local_mask
                 total_params = sum(m.numel() for m in local_mask.values())
                 frozen_params = sum((m == 0).sum().item() for m in local_mask.values())
@@ -656,10 +656,7 @@ class FederatedLearning:
             })
 
     def run_centralized_model_editing(self,train_loader,val_loader,top_k):
-        """
-        Runs the centralized training process with model editing.
-        This method mirrors the structure of the federated version for comparison.
-        """
+   
         run_name = f"Centralized,lr={self.config.learning_rate},model_editing=YES"
         wandb.init(
             project=self.config.training_name,
@@ -675,18 +672,15 @@ class FederatedLearning:
                 "model_editing_top_k": top_k # Reintroduced for model editing
             }
         )
-        #wandb.watch(self.global_model) # Watch the global model (which is self.model)
-
+    
         print("--- Centralized Training with Model Editing ---")
 
-        # Step 1: Compute Fisher Information and generate mask for the entire dataset
-        # This is done ONCE at the beginning for the centralized model
         print("Computing Fisher Information on the full training dataset...")
         fisher_scores = self.compute_fisher_information(
             self.global_model, train_loader, self.config.loss_function
         )
         print("Generating model mask...")
-        model_mask = self.generate_mask(fisher_scores, top_k=top_k)
+        model_mask = self.generate_mask(fisher_scores,strategy="fisher_least", top_k=top_k)
         
         # Log mask sparsity
         total_params = sum(m.numel() for m in model_mask.values())
