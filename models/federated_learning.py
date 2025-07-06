@@ -632,7 +632,7 @@ class FederatedLearning:
                 )
               
 
-                local_mask = self.generate_mask(fisher,strategy=type_model_editing, top_k=top_k)
+                local_mask = self.generate_mask(fisher,type_model_editing, top_k)
                 dict_client_masks[client_id] = local_mask
                 total_params = sum(m.numel() for m in local_mask.values())
                 frozen_params = sum((m == 0).sum().item() for m in local_mask.values())
@@ -988,7 +988,7 @@ class FederatedLearning:
             for name, score, shape in zip(param_names, split_scores, param_shapes)
         }
 
-    def generate_mask(fisher_info: dict, strategy: str, top_k: float = 0.1) -> dict:
+    def generate_mask(fisher_info, strategy, top_k = 0.1):
         """
         Generates a binary mask based on importance scores.
         The mask values will be 1 for parameters/elements that should be TRAINED (least important),
