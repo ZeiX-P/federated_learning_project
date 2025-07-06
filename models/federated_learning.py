@@ -632,7 +632,7 @@ class FederatedLearning:
                 )
               
 
-                local_mask = self.generate_mask(fisher, top_k)
+                local_mask = self.generate_mask(fisher,type_model_editing, top_k)
                 dict_client_masks[client_id] = local_mask
                 total_params = sum(m.numel() for m in local_mask.values())
                 frozen_params = sum((m == 0).sum().item() for m in local_mask.values())
@@ -992,7 +992,7 @@ class FederatedLearning:
         }
 
    
-    def generate_mask(self,fisher_info, top_k: float = 0.1, strategy: str = "fisher_left_only"):
+    def generate_mask(self,fisher_info, strategy: str = "fisher_left_only",top_k: float = 0.1):
         if strategy.startswith("fisher"):
             all_scores = torch.cat([f.view(-1) for f in fisher_info.values()])
             
