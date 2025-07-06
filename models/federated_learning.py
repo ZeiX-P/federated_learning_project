@@ -988,7 +988,7 @@ class FederatedLearning:
             for name, score, shape in zip(param_names, split_scores, param_shapes)
         }
 
-    def generate_mask(fisher_info, strategy, top_k = 0.1):
+    def generate_mask(self,fisher_info, strategy, top_k = 0.1):
         """
         Generates a binary mask based on importance scores.
         The mask values will be 1 for parameters/elements that should be TRAINED (least important),
