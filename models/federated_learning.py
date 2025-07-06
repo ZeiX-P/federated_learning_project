@@ -824,11 +824,11 @@ class FederatedLearning:
 
 
     def train_with_global_mask_local_step(self, model, train_loader, val_loader, client_id, round, mask):
-        # Apply the binary mask using requires_grad
+     
         with torch.no_grad(): # Operations here should not be part of the computational graph
             for name, param in model.named_parameters():
-                if param.grad is not None and name in self.mask:
-                    param_mask_tensor = self.mask[name]
+                if param.grad is not None and name in mask:
+                    param_mask_tensor = mask[name]
 
                     # Multiply gradients by the mask.
                     # Where mask_tensor is 1 (TRAIN), gradient remains (grad * 1).
