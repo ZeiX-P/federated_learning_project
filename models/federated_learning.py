@@ -568,7 +568,7 @@ class FederatedLearning:
 
     def run_model_editing_federated(self, type_model_editing, top_k=0.1):
 
-        run_name = f"{self.distribution_type},local_steps:{self.local_steps},class_per_client:{self.class_per_client},model_editing=YES"
+        run_name = f"{self.distribution_type},local_steps:{self.local_steps},class_per_client:{self.class_per_client},model_editing=YES,type:{type_model_editing}"
         wandb.init(
             project=self.config.training_name, 
             name=run_name,
