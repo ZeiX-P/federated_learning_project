@@ -1017,15 +1017,17 @@ class FederatedLearning:
             total_elements = sum(p.numel() for p in fisher_info.values())
             total_masked = sum(m.sum().item() for m in mask.values())
             print(f"With noise - Masked {total_masked}/{total_elements} elements ({total_masked/total_elements:.1%})")
+
+            print(f"Fisher min: {all_scores.min().item():.6e}")
+            print(f"Fisher max: {all_scores.max().item():.6e}")
+            print(f"Fisher mean: {all_scores.mean().item():.6e}")
+            print(f"Fisher median: {all_scores.median().item():.6e}")
+            print(f"Threshold for top_k={top_k}: {threshold.item():.6e}")
+        # Handle other strategies normally
             
             return mask
-        print(f"Fisher min: {all_scores.min().item():.6e}")
-        print(f"Fisher max: {all_scores.max().item():.6e}")
-        print(f"Fisher mean: {all_scores.mean().item():.6e}")
-        print(f"Fisher median: {all_scores.median().item():.6e}")
-        print(f"Threshold for top_k={top_k}: {threshold.item():.6e}")
-        # Handle other strategies normally
-        return mask
+    
+  
 
 
 
