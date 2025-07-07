@@ -974,7 +974,7 @@ class FederatedLearning:
 
         return fisher
 
-    def compute_fisher_information(self, dataloader, loss_fn):
+    def compute_fisher_information(self,model, dataloader, loss_fn):
         """
         Computes an empirical estimate of the diagonal Fisher Information Matrix
         for the model's parameters over the *entire* provided dataloader.
@@ -990,12 +990,12 @@ class FederatedLearning:
                   containing the average squared gradient for each element.
         """
         # Ensure model is in evaluation mode to disable dropout, batch norm updates, etc.
-        self.model.eval()
+        model.eval()
 
         # Initialize a dictionary to store accumulated squared gradients for each parameter
         # Only for parameters that require gradients
         accumulated_fisher = {}
-        for name, param in self.model.named_parameters():
+        for name, param in model.named_parameters():
             if param.requires_grad:
                 accumulated_fisher[name] = torch.zeros_like(param, device=self.device)
 
@@ -1009,18 +1009,18 @@ class FederatedLearning:
                 targets = targets.to(self.device)
 
                 # Zero gradients before each backward pass
-                self.model.zero_grad()
+                model.zero_grad()
 
                 # Enable gradient computation for the forward pass here
                 with torch.enable_grad():
-                    outputs = self.model(inputs)
+                    outputs = model(inputs)
                     loss = loss_fn(outputs, targets)
 
                 # Perform backward pass to compute gradients.
                 loss.backward()
 
                 # Accumulate squared gradients
-                for name, param in self.model.named_parameters():
+                for name, param in model.named_parameters():
                     if param.grad is not None:
                         # Add the squared gradient of this batch to the accumulator
                         accumulated_fisher[name] += param.grad.data.pow(2)
@@ -1058,7 +1058,7 @@ class FederatedLearning:
         else:
             print("Warning: No Fisher values computed. Ensure parameters require grad or model has parameters.")
 
-        self.model.train() # Set model back to training mode
+        model.train() # Set model back to training mode
         return accumulated_fisher
 
     def reshape_fisher_to_named(self, fisher_flat, model):
