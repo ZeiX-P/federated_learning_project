@@ -1081,8 +1081,8 @@ class FederatedLearning:
             # Add tiny random noise to break ties
             fisher_with_noise = {}
             for name, tensor in fisher_info.items():
-                noise = torch.randn_like(tensor) * 1e-3
-                fisher_with_noise[name] = tensor + noise
+                
+                fisher_with_noise[name] = tensor + 1e-3
             
             all_scores = torch.cat([f.view(-1) for f in fisher_with_noise.values()])
             
