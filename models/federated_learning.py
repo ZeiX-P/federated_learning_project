@@ -655,7 +655,7 @@ class FederatedLearning:
                 "global/val_accuracy": global_metrics.get("val_accuracy", 0)
             })
 
-    def run_centralized_model_editing(self,train_loader,val_loader,top_k):
+    def run_centralized_model_editing1(self,train_loader,val_loader,top_k):
    
         run_name = f"Centralized,lr={self.config.learning_rate},model_editing=YES"
         wandb.init(
@@ -700,6 +700,8 @@ class FederatedLearning:
                     param.requires_grad_(True)
             else: # If a parameter is not in the mask, default to True (trainable)
                 param.requires_grad_(True)
+
+        
 
         print("Mask applied. Parameters ready for training.")
         # Filter parameters by requires_grad for the optimizer
@@ -758,6 +760,107 @@ class FederatedLearning:
             })
         wandb.finish()
         print("--- Centralized Training Completed ---")
+
+
+    def run_centralized_model_editing(self, train_loader, val_loader, top_k):
+        run_name = f"Centralized,lr={self.config.learning_rate},model_editing=YES"
+        wandb.init(
+            project=self.config.training_name,
+            name=run_name,
+            config={
+                "training_type": "centralized",
+                "num_epochs": self.config.epochs,
+                "batch_size": self.config.batch_size,
+                "learning_rate": self.config.learning_rate,
+                "momentum": self.config.momentum,
+                "weight_decay": self.config.weight_decay,
+                "dataset": self.config.dataset,
+                "model_editing_top_k": top_k
+            }
+        )
+
+        print("--- Centralized Training with Model Editing ---")
+
+        # Step 1: Compute Fisher Information
+        print("Computing Fisher Information on the full training dataset...")
+        fisher_scores = self.compute_fisher_information(
+            self.global_model, train_loader, self.config.loss_function
+        )
+
+        # Step 2: Generate a binary gradient mask
+        print("Generating model mask...")
+        model_mask = self.generate_mask(fisher_scores, strategy="fisher_least", top_k=top_k)
+
+        # Log mask sparsity
+        total_params = sum(m.numel() for m in model_mask.values())
+        frozen_params = sum((m == 0).sum().item() for m in model_mask.values())
+        sparsity = frozen_params / total_params if total_params > 0 else 0
+        wandb.log({"model/mask_sparsity": sparsity})
+        print(f"Mask sparsity: {sparsity:.2f}")
+
+        # Step 3: Optimizer and Scheduler
+        optimizer = self.config.optimizer_class(
+            self.global_model.parameters(),
+            lr=self.config.learning_rate,
+            **self.config.optimizer_params
+        ) if self.config.optimizer_class else torch.optim.SGD(
+            self.global_model.parameters(), lr=0.01, momentum=0.9, weight_decay=1e-4
+        )
+
+        scheduler = self.config.scheduler_class(
+            optimizer, **self.config.scheduler_params
+        ) if self.config.scheduler_class else torch.optim.lr_scheduler.StepLR(
+            optimizer, step_size=10, gamma=0.1
+        )
+
+        loss_func = self.config.loss_function
+
+        # Step 4: Centralized Training Loop
+        for epoch in range(1, self.config.epochs + 1):
+            self.global_model.train()
+            running_loss = 0.0
+            correct_train = 0
+            total_train = 0
+
+            for batch_idx, (inputs, targets) in enumerate(train_loader):
+                inputs, targets = inputs.to(self.device), targets.to(self.device)
+
+                optimizer.zero_grad()
+                preds = self.global_model(inputs)
+                loss = loss_func(preds, targets)
+                loss.backward()
+
+                # === Apply gradient mask ===
+                with torch.no_grad():
+                    for name, param in self.global_model.named_parameters():
+                        if param.grad is not None and name in model_mask:
+                            param.grad.mul_(model_mask[name].to(param.device))
+
+                optimizer.step()
+                scheduler.step()
+
+                running_loss += loss.item() * targets.size(0)
+                _, predicted = preds.max(1)
+                total_train += targets.size(0)
+                correct_train += predicted.eq(targets).sum().item()
+
+            train_loss = running_loss / total_train
+            train_accuracy = 100.0 * correct_train / total_train
+
+            # Step 5: Evaluate and log metrics
+            val_metrics = self.evaluate_global_model()
+
+            wandb.log({
+                "Epoch": epoch,
+                "train/loss": train_loss,
+                "train/accuracy": train_accuracy,
+                "global/val_loss": val_metrics["val_loss"],
+                "global/val_accuracy": val_metrics.get("val_accuracy", 0)
+            })
+
+        wandb.finish()
+        print("--- Centralized Training Completed ---")
+
 
     def train_with_global_mask_epochs(self, model, train_loader, val_loader, client_id, round, mask):
         # Apply the binary mask using requires_grad
