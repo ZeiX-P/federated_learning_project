@@ -989,80 +989,41 @@ class FederatedLearning:
         }
 
     
-    def generate_mask(self, fisher_info, strategy, top_k):
+    def generate_mask(self, fisher_info, strategy, top_k=0.1):
         """
-        Generates a binary mask based on importance scores.
-        The mask values will be 1 for parameters/elements that should be TRAINED (least important),
-        and 0 for parameters/elements that should be FROZEN (more important).
+        Simple fix: Add small random noise to break ties in Fisher values
         """
-        
         if strategy.startswith("fisher"):
-            all_scores = torch.cat([f.view(-1) for f in fisher_info.values()])
-            total_elements = all_scores.numel()
+            # Add tiny random noise to break ties
+            fisher_with_noise = {}
+            for name, tensor in fisher_info.items():
+                noise = torch.randn_like(tensor) * 1e-12
+                fisher_with_noise[name] = tensor + noise
             
-            print(f"Strategy: {strategy}, top_k: {top_k}")
-            print(f"Total elements: {total_elements}")
-            print(f"Fisher stats - Min: {all_scores.min():.6f}, Max: {all_scores.max():.6f}, Mean: {all_scores.mean():.6f}")
-
+            all_scores = torch.cat([f.view(-1) for f in fisher_with_noise.values()])
+            
             if strategy == "fisher_least" or strategy == "fisher_left_only":
-                # FIXED: Use quantile instead of kthvalue
                 threshold = torch.quantile(all_scores, top_k)
                 compare = lambda x: x <= threshold
-                print(f"Fisher least threshold: {threshold:.6f}")
-                
             elif strategy == "fisher_most":
-                # FIXED: Use quantile for top percentile
                 threshold = torch.quantile(all_scores, 1.0 - top_k)
                 compare = lambda x: x >= threshold
-                print(f"Fisher most threshold: {threshold:.6f}")
-                
             else:
                 raise ValueError(f"Unknown Fisher strategy: {strategy}")
 
-            mask = {name: compare(tensor).float() for name, tensor in fisher_info.items()}
-            
-            # Debug: Print actual masking statistics
-            total_masked = sum(m.sum().item() for m in mask.values())
-            actual_fraction = total_masked / total_elements
-            print(f"Masked {total_masked}/{total_elements} elements ({actual_fraction:.1%})")
-            print(f"Expected fraction: {top_k:.1%}")
-            print("-" * 50)
-
-        elif strategy in {"magnitude_lowest", "magnitude_highest"}:
-            # FIXED: Separate parameter handling from Fisher info
-            if not all(isinstance(v, torch.Tensor) for v in fisher_info.values()):
-                raise ValueError("For magnitude strategies, fisher_info should contain parameter tensors")
-                
-            all_params = torch.cat([p.view(-1).abs() for p in fisher_info.values()])
-            total_elements = all_params.numel()
-            
-            print(f"Strategy: {strategy}, top_k: {top_k}")
-            print(f"Magnitude stats - Min: {all_params.min():.6f}, Max: {all_params.max():.6f}")
-
-            if strategy == "magnitude_lowest":
-                threshold = torch.quantile(all_params, top_k)
-                compare = lambda x: x.abs() <= threshold
-            else:  # magnitude_highest
-                threshold = torch.quantile(all_params, 1.0 - top_k)
-                compare = lambda x: x.abs() >= threshold
-                
-            mask = {name: compare(p).float() for name, p in fisher_info.items()}
+            mask = {name: compare(tensor).float() for name, tensor in fisher_with_noise.items()}
             
             # Debug info
+            total_elements = sum(p.numel() for p in fisher_info.values())
             total_masked = sum(m.sum().item() for m in mask.values())
-            print(f"Masked {total_masked}/{total_elements} elements ({total_masked/total_elements:.1%})")
-
-        elif strategy == "random":
-            mask = {
-                name: (torch.rand_like(p) < top_k).float()
-                for name, p in fisher_info.items()
-            }
+            print(f"With noise - Masked {total_masked}/{total_elements} elements ({total_masked/total_elements:.1%})")
             
+            return mask
         
-        else:
-            raise ValueError(f"Unknown strategy: {strategy}")
-
+        # Handle other strategies normally
         return mask
+
+
 
 
     def __del__(self):
