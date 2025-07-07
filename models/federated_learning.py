@@ -824,76 +824,61 @@ class FederatedLearning:
 
 
     def train_with_global_mask_local_step(self, model, train_loader, val_loader, client_id, round, mask):
-     
-        with torch.no_grad(): # Operations here should not be part of the computational graph
-            for name, param in model.named_parameters():
-                if param.grad is not None and name in mask:
-                    param_mask_tensor = mask[name]
-
-                    # Multiply gradients by the mask.
-                    # Where mask_tensor is 1 (TRAIN), gradient remains (grad * 1).
-                    # Where mask_tensor is 0 (FREEZE), gradient becomes 0 (grad * 0).
-                    param.grad.mul_(param_mask_tensor)
-
-        # Filter parameters by requires_grad
-        optimizer_params = [p for p in model.parameters() if p.requires_grad]
-        
-        optimizer = self.config.optimizer_class(
-            optimizer_params,
-            lr=self.config.learning_rate,
-            **self.config.optimizer_params
-        )
-        optimizer = torch.optim.SGD(optimizer_params, lr=0.01, momentum=0.9, weight_decay=1e-4)
-        scheduler = None
-        if self.config.scheduler_class:
-            scheduler = self.config.scheduler_class(optimizer, **self.config.scheduler_params)
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
+        model.train()
+        device = self.device
         loss_func = self.config.loss_function
 
-        # Local step training loop
-        model.train()
-        step = 0
-        total_steps = self.local_steps  # You must define this in your config or class
+        optimizer_params = [p for p in model.parameters() if p.requires_grad]
+        optimizer = torch.optim.SGD(optimizer_params, lr=0.01, momentum=0.9, weight_decay=1e-4)
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
+
+        total_steps = self.local_steps  # make sure this is defined in your config/class
         data_iter = iter(train_loader)
 
-        correct, total = 0, 0
         running_loss = 0.0
+        correct = 0
+        total = 0
 
-        while step < total_steps:
+        for step in range(total_steps):
             try:
                 inputs, targets = next(data_iter)
             except StopIteration:
                 data_iter = iter(train_loader)
                 inputs, targets = next(data_iter)
 
-            inputs, targets = inputs.to(self.device), targets.to(self.device)
-
-            preds = model(inputs)
-            loss = loss_func(preds, targets)
+            inputs, targets = inputs.to(device), targets.to(device)
 
             optimizer.zero_grad()
+            preds = model(inputs)
+            loss = loss_func(preds, targets)
             loss.backward()
+
+            # === Apply gradient mask AFTER backward, BEFORE optimizer step ===
+            with torch.no_grad():
+                for name, param in model.named_parameters():
+                    if param.grad is not None and name in mask:
+                        param.grad.mul_(mask[name])
+
             optimizer.step()
+            scheduler.step()
 
             running_loss += loss.item() * targets.size(0)
             _, predicted = preds.max(1)
             total += targets.size(0)
             correct += predicted.eq(targets).sum().item()
 
-            if scheduler is not None:
-                scheduler.step()
-
-            # Optional: log every step
+            # Optional: log progress per step
             wandb.log({
                 f"client_{client_id}/step_loss": loss.item(),
                 "round": round,
                 "step": step + 1
             })
 
-            step += 1
-
         train_loss = running_loss / total
         train_accuracy = 100.0 * correct / total
+
+        
+
 
         # Final log per round
         wandb.log({
@@ -901,6 +886,7 @@ class FederatedLearning:
             f"client_{client_id}/train_accuracy": train_accuracy,
             "round": round
         })
+        return train_loss, train_accuracy
 
 
     def compute_fisher_diag(self, model, dataloader, loss_fn):
