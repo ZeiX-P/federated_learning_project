@@ -994,6 +994,9 @@ class FederatedLearning:
 
         # Initialize a dictionary to store accumulated squared gradients for each parameter
         # Only for parameters that require gradients
+
+        for param in model.parameters():
+            param.requires_grad = True
         accumulated_fisher = {}
         for name, param in model.named_parameters():
             if param.requires_grad:
@@ -1057,7 +1060,11 @@ class FederatedLearning:
             })
         else:
             print("Warning: No Fisher values computed. Ensure parameters require grad or model has parameters.")
+        for param in model.parameters():
+            param.requires_grad = False
 
+        for param in model.head.parameters():
+            param.requires_grad = True
         model.train() # Set model back to training mode
         return accumulated_fisher
 
