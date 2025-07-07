@@ -761,6 +761,105 @@ class FederatedLearning:
         wandb.finish()
         print("--- Centralized Training Completed ---")
 
+    def run_centralized_model_editing_with_local_steps(self, train_loader, val_loader, top_k, local_steps):
+        run_name = f"Centralized,lr={self.config.learning_rate},model_editing=YES"
+        wandb.init(
+            project=self.config.training_name,
+            name=run_name,
+            config={
+                "training_type": "centralized_with_local_steps",
+                "num_epochs": self.config.epochs,
+                "local_steps": local_steps,
+                "batch_size": self.config.batch_size,
+                "learning_rate": self.config.learning_rate,
+                "momentum": self.config.momentum,
+                "weight_decay": self.config.weight_decay,
+                "dataset": self.config.dataset,
+                "model_editing_top_k": top_k
+            }
+        )
+
+        print("--- Centralized Training with Model Editing and Local Steps ---")
+
+        # Step 1: Compute Fisher Information
+        print("Computing Fisher Information on the full training dataset...")
+        fisher_scores = self.compute_fisher_information(
+            self.global_model, train_loader, self.config.loss_function
+        )
+
+        # Step 2: Generate mask
+        print("Generating model mask...")
+        model_mask = self.generate_mask(fisher_scores, strategy="fisher_least", top_k=top_k)
+
+        total_params = sum(m.numel() for m in model_mask.values())
+        frozen_params = sum((m == 0).sum().item() for m in model_mask.values())
+        sparsity = frozen_params / total_params if total_params > 0 else 0
+        wandb.log({"model/mask_sparsity": sparsity})
+        print(f"Mask sparsity: {sparsity:.2f}")
+
+        # Step 3: Setup optimizer and scheduler
+        optimizer_params = [p for p in self.global_model.parameters() if p.requires_grad]
+        optimizer = torch.optim.SGD(optimizer_params, lr=0.01, momentum=0.9, weight_decay=1e-4)
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
+
+
+        loss_func = self.config.loss_function
+
+        data_iter = iter(train_loader)
+
+        for epoch in range(1, self.config.epochs + 1):
+            self.global_model.train()
+            running_loss = 0.0
+            correct_train = 0
+            total_train = 0
+
+            for step in range(local_steps):
+                try:
+                    inputs, targets = next(data_iter)
+                except StopIteration:
+                    data_iter = iter(train_loader)
+                    inputs, targets = next(data_iter)
+
+                inputs, targets = inputs.to(self.device), targets.to(self.device)
+
+                optimizer.zero_grad()
+                preds = self.global_model(inputs)
+                loss = loss_func(preds, targets)
+                loss.backward()
+
+                # Apply gradient mask before optimizer step
+                with torch.no_grad():
+                    for name, param in self.global_model.named_parameters():
+                        if param.grad is not None and name in model_mask:
+                            param.grad.mul_(model_mask[name].to(param.device))
+
+                optimizer.step()
+                scheduler.step()
+
+                running_loss += loss.item() * targets.size(0)
+                _, predicted = preds.max(1)
+                total_train += targets.size(0)
+                correct_train += predicted.eq(targets).sum().item()
+
+            train_loss = running_loss / total_train
+            train_accuracy = 100.0 * correct_train / total_train
+
+            # Evaluate on validation set
+            val_metrics = self.evaluate_global_model()
+
+            wandb.log({
+                "Epoch": epoch,
+                "train/loss": train_loss,
+                "train/accuracy": train_accuracy,
+                "global/val_loss": val_metrics["val_loss"],
+                "global/val_accuracy": val_metrics.get("val_accuracy", 0)
+            })
+
+            print(f"Epoch {epoch}: Train loss {train_loss:.4f}, Train accuracy {train_accuracy:.2f}%")
+
+        wandb.finish()
+        print("--- Centralized Training with Local Steps Completed ---")
+
 
     def run_centralized_model_editing(self, train_loader, val_loader, top_k):
         run_name = f"Centralized,lr={self.config.learning_rate},model_editing=YES"
