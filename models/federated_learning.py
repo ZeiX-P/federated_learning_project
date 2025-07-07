@@ -975,12 +975,12 @@ class FederatedLearning:
         }
 
     
-    def generate_mask(self, fisher_info, strategy, top_k=0.1):
+    def generate_mask1(self, fisher_info, strategy, top_k=0.1):
         """
         Simple fix: Add small random noise to break ties in Fisher values
         """
         if strategy.startswith("fisher"):
-            # Add tiny random noise to break ties
+            # Add tiny  noise to break ties
             fisher_with_noise = {}
             for name, tensor in fisher_info.items():
                 
@@ -1014,6 +1014,91 @@ class FederatedLearning:
             return mask
     
   
+    def generate_mask(self, scores_or_params_info: dict, strategy: str, top_k: float = 0.1) -> dict:
+        
+        # Ensure top_k is within valid range
+        if not (0.0 <= top_k <= 1.0):
+            raise ValueError("top_k must be between 0.0 and 1.0")
+
+        mask = {}
+        all_relevant_scores_flat = None # Will hold flattened scores/magnitudes for quantile calculation
+        
+        # --- Strategy: Fisher-based ---
+        if strategy == "fisher_least":
+            # For Fisher strategies, scores_or_params_info should contain Fisher values.
+            # We want to TRAIN the LEAST important, so mask=1 where score <= threshold.
+            
+            all_relevant_scores_flat = torch.cat([s.view(-1) for s in scores_or_params_info.values()])
+            
+            # torch.quantile will handle identical values, returning the identical value as threshold.
+            threshold = torch.quantile(all_relevant_scores_flat, top_k)
+            
+            compare = lambda x: x <= threshold # 1 for least important (TRAIN)
+
+        elif strategy == "fisher_most":
+            # For Fisher strategies, scores_or_params_info should contain Fisher values.
+            # We want to TRAIN the MOST important, so mask=1 where score >= threshold.
+            
+            all_relevant_scores_flat = torch.cat([s.view(-1) for s in scores_or_params_info.values()])
+            
+            # torch.quantile will handle identical values, returning the identical value as threshold.
+            threshold = torch.quantile(all_relevant_scores_flat, 1.0 - top_k)
+            
+            compare = lambda x: x >= threshold # 1 for most important (TRAIN)
+
+        # --- Strategy: Magnitude-based ---
+        elif strategy == "magnitude_lowest":
+            # For magnitude strategies, scores_or_params_info should contain parameter tensors.
+            # We want to TRAIN the LOWEST magnitude, so mask=1 where abs(param) <= threshold.
+            all_relevant_scores_flat = torch.cat([p.view(-1).abs() for p in scores_or_params_info.values()])
+            
+            # torch.quantile will handle identical values.
+            threshold = torch.quantile(all_relevant_scores_flat, top_k)
+            
+            compare = lambda x: x.abs() <= threshold # 1 for lowest magnitude (TRAIN)
+
+        elif strategy == "magnitude_highest":
+            # For magnitude strategies, scores_or_params_info should contain parameter tensors.
+            # We want to TRAIN the HIGHEST magnitude, so mask=1 where abs(param) >= threshold.
+            all_relevant_scores_flat = torch.cat([p.view(-1).abs() for p in scores_or_params_info.values()])
+            
+            # torch.quantile will handle identical values.
+            threshold = torch.quantile(all_relevant_scores_flat, 1.0 - top_k)
+            
+            compare = lambda x: x.abs() >= threshold # 1 for highest magnitude (TRAIN)
+
+        # --- Strategy: Random ---
+        elif strategy == "random":
+            # For random, scores_or_params_info should contain parameter tensors (for their shapes).
+            # We want to TRAIN 'top_k' fraction randomly.
+            for name, p_tensor in scores_or_params_info.items():
+                mask[name] = (torch.rand_like(p_tensor) < top_k).float() # Randomly assign 1s based on top_k probability
+            
+            # No threshold or comparison needed for random, so we can return early
+            total_elements = sum(p.numel() for p in scores_or_params_info.values())
+            total_masked = sum(m.sum().item() for m in mask.values())
+            print(f"Strategy: {strategy}, top_k: {top_k}")
+            print(f"Random strategy - Masked {total_masked}/{total_elements} elements ({total_masked/total_elements:.1%})")
+            return mask
+
+        else:
+            raise ValueError(f"Unknown strategy: {strategy}")
+
+        # --- Common Mask Generation and Debug Info (for non-random strategies) ---
+        for name, tensor_or_param in scores_or_params_info.items():
+            # For Fisher: 'tensor_or_param' is Fisher score tensor
+            # For Magnitude: 'tensor_or_param' is parameter tensor
+            # The 'compare' lambda handles the correct input (x or x.abs())
+            mask[name] = compare(tensor_or_param).float()
+
+        total_elements = sum(p.numel() for p in scores_or_params_info.values())
+        total_masked = sum(m.sum().item() for m in mask.values())
+        
+        print(f"Strategy: {strategy}, top_k: {top_k}")
+        print(f"Masked {total_masked}/{total_elements} elements ({total_masked/total_elements:.1%})")
+        
+
+        return mask
 
 
 
