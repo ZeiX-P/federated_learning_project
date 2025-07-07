@@ -988,70 +988,83 @@ class FederatedLearning:
             for name, score, shape in zip(param_names, split_scores, param_shapes)
         }
 
-    def generate_mask(self,fisher_info, strategy, top_k = 0.1):
+    
+    def generate_mask(self, fisher_info, strategy, top_k):
         """
         Generates a binary mask based on importance scores.
         The mask values will be 1 for parameters/elements that should be TRAINED (least important),
         and 0 for parameters/elements that should be FROZEN (more important).
-
-        Args:
-            fisher_info (dict): A dictionary mapping parameter names to their importance scores (e.g., Fisher values).
-            strategy (str): The masking strategy to use (e.g., "fisher_left_only").
-            top_k (float): A fraction relevant to the strategy (e.g., top K% to consider).
-
-        Returns:
-            dict: A dictionary where keys are parameter names and values are binary PyTorch tensors (0s and 1s)
-                representing the mask for that parameter.
         """
+        
         if strategy.startswith("fisher"):
             all_scores = torch.cat([f.view(-1) for f in fisher_info.values()])
             total_elements = all_scores.numel()
+            
+            print(f"Strategy: {strategy}, top_k: {top_k}")
+            print(f"Total elements: {total_elements}")
+            print(f"Fisher stats - Min: {all_scores.min():.6f}, Max: {all_scores.max():.6f}, Mean: {all_scores.mean():.6f}")
 
             if strategy == "fisher_least" or strategy == "fisher_left_only":
-                # Goal: Identify 'top_k' fraction of LEAST important parameters/elements to TRAIN.
-                # Mask will be 1 for these (scores <= threshold), and 0 for others.
-                k = max(1, int(top_k * total_elements))
-                threshold = torch.kthvalue(all_scores, k).values
-                compare = lambda x: x <= threshold # Returns True for LEAST important (TRAIN)
+                # FIXED: Use quantile instead of kthvalue
+                threshold = torch.quantile(all_scores, top_k)
+                compare = lambda x: x <= threshold
+                print(f"Fisher least threshold: {threshold:.6f}")
+                
             elif strategy == "fisher_most":
-                # This strategy identifies the MOST important elements.
-                # If you wanted to *train* the MOST important, you'd use this and adjust compare.
-                # For your current goal (train LEAST important), stick to fisher_left_only.
-                k = max(1, int((1 - top_k) * total_elements))
-                threshold = torch.kthvalue(all_scores, k).values
-                compare = lambda x: x >= threshold # Returns True for MOST important (opposite of what we want for this mask)
-                # If you *still* wanted to use fisher_most but produce a mask for training LEAST important:
-                # compare = lambda x: x < threshold # 1s for elements *below* the threshold of the most important
+                # FIXED: Use quantile for top percentile
+                threshold = torch.quantile(all_scores, 1.0 - top_k)
+                compare = lambda x: x >= threshold
+                print(f"Fisher most threshold: {threshold:.6f}")
+                
             else:
                 raise ValueError(f"Unknown Fisher strategy: {strategy}")
 
             mask = {name: compare(tensor).float() for name, tensor in fisher_info.items()}
+            
+            # Debug: Print actual masking statistics
+            total_masked = sum(m.sum().item() for m in mask.values())
+            actual_fraction = total_masked / total_elements
+            print(f"Masked {total_masked}/{total_elements} elements ({actual_fraction:.1%})")
+            print(f"Expected fraction: {top_k:.1%}")
+            print("-" * 50)
 
         elif strategy in {"magnitude_lowest", "magnitude_highest"}:
+            # FIXED: Separate parameter handling from Fisher info
+            if not all(isinstance(v, torch.Tensor) for v in fisher_info.values()):
+                raise ValueError("For magnitude strategies, fisher_info should contain parameter tensors")
+                
             all_params = torch.cat([p.view(-1).abs() for p in fisher_info.values()])
             total_elements = all_params.numel()
+            
+            print(f"Strategy: {strategy}, top_k: {top_k}")
+            print(f"Magnitude stats - Min: {all_params.min():.6f}, Max: {all_params.max():.6f}")
 
             if strategy == "magnitude_lowest":
-                k = max(1, int(top_k * total_elements))
-                threshold = torch.kthvalue(all_params, k).values
+                threshold = torch.quantile(all_params, top_k)
                 compare = lambda x: x.abs() <= threshold
-            else: # magnitude_highest
-                k = max(1, int((1 - top_k) * total_elements))
-                threshold = torch.kthvalue(all_params, k).values
-                compare = lambda x: x.abs() < threshold
+            else:  # magnitude_highest
+                threshold = torch.quantile(all_params, 1.0 - top_k)
+                compare = lambda x: x.abs() >= threshold
+                
             mask = {name: compare(p).float() for name, p in fisher_info.items()}
+            
+            # Debug info
+            total_masked = sum(m.sum().item() for m in mask.values())
+            print(f"Masked {total_masked}/{total_elements} elements ({total_masked/total_elements:.1%})")
 
         elif strategy == "random":
             mask = {
                 name: (torch.rand_like(p) < top_k).float()
                 for name, p in fisher_info.items()
             }
-
+            
+        
         else:
             raise ValueError(f"Unknown strategy: {strategy}")
 
         return mask
-    
+
+
     def __del__(self):
         """Clean up when the class is deleted."""
         try:
