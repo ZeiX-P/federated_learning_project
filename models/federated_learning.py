@@ -941,31 +941,33 @@ class FederatedLearning:
 
         return fisher_diag
 
-    def compute_fisher_information1(self,model, dataloader, loss_fn, num_samples=1000):
-        model.eval()
+    def compute_fisher_information(self,model, dataloader, loss_fn, num_samples=400):
+        model.eval() # Sets model to evaluation mode (no dropout, stable BatchNorm)
         fisher = {}
         for name, param in model.named_parameters():
             if param.requires_grad:
-                fisher[name] = torch.zeros_like(param)
+                fisher[name] = torch.zeros_like(param) # Initializes Fisher values to zeros for trainable params
 
         count = 0
         for inputs, targets in dataloader:
-            if count >= num_samples:
+            if count >= num_samples: # Limits the number of batches used for Fisher calculation
                 break
             inputs, targets = inputs.to(self.device), targets.to(self.device)
-            model.zero_grad()
+            
+            model.zero_grad() # <<< CORRECTLY PLACED: Zeros gradients *once per batch*
+            
             outputs = model(inputs)
             loss = loss_fn(outputs, targets)
-            loss.backward()
+            loss.backward() # Computes gradients for the entire batch
 
             for name, param in model.named_parameters():
-                if param.grad is not None:
-                    fisher[name] += param.grad.data ** 2
+                if param.grad is not None: # Checks if gradients exist (i.e., param.requires_grad was True)
+                    fisher[name] += param.grad.data ** 2 # Accumulates squared gradients (Empirical Fisher diagonal)
 
-            count += 1
+            count += 1 # Increments batch counter
 
         for name in fisher:
-            fisher[name] /= count
+            fisher[name] /= count # Divides total accumulated squared gradients by the number of batches
 
         # Log Fisher histograms to wandb
         all_fisher_values = torch.cat([v.flatten().cpu() for v in fisher.values()])
@@ -974,100 +976,7 @@ class FederatedLearning:
 
         return fisher
 
-    def compute_fisher_information(self,model, dataloader, loss_fn):
-        """
-        Computes an empirical estimate of the diagonal Fisher Information Matrix
-        for the model's parameters over the *entire* provided dataloader.
-        Fisher values represent parameter importance.
-
-        Args:
-            dataloader (torch.utils.data.DataLoader): DataLoader for computing Fisher.
-            loss_fn (torch.nn.Module): The loss function used for training.
-
-        Returns:
-            dict: A dictionary mapping parameter names to their computed Fisher values (tensors).
-                  Each tensor in the dictionary has the same shape as the corresponding parameter,
-                  containing the average squared gradient for each element.
-        """
-        # Ensure model is in evaluation mode to disable dropout, batch norm updates, etc.
-        model.eval()
-
-        # Initialize a dictionary to store accumulated squared gradients for each parameter
-        # Only for parameters that require gradients
-
-        for param in model.parameters():
-            param.requires_grad = True
-        accumulated_fisher = {}
-        for name, param in model.named_parameters():
-            if param.requires_grad:
-                accumulated_fisher[name] = torch.zeros_like(param, device=self.device)
-
-        processed_samples_count = 0
-        # No progress bar when not using tqdm
-        
-        with torch.no_grad(): # No need to track gradients for model parameters during forward pass here
-            for inputs, targets in dataloader: # Iterating directly over dataloader
-                # Move inputs/targets to the specified device
-                inputs = inputs.to(self.device)
-                targets = targets.to(self.device)
-
-                # Zero gradients before each backward pass
-                model.zero_grad()
-
-                # Enable gradient computation for the forward pass here
-                with torch.enable_grad():
-                    outputs = model(inputs)
-                    loss = loss_fn(outputs, targets)
-
-                # Perform backward pass to compute gradients.
-                loss.backward()
-
-                # Accumulate squared gradients
-                for name, param in model.named_parameters():
-                    if param.grad is not None:
-                        # Add the squared gradient of this batch to the accumulator
-                        accumulated_fisher[name] += param.grad.data.pow(2)
-                    # Handle case where a parameter requires grad but has no grad
-                    elif param.requires_grad and name in accumulated_fisher:
-                        # You might want to log a warning here if this happens frequently
-                        pass 
-
-                processed_samples_count += inputs.size(0) # Count actual samples processed
-
-                # No pbar.set_postfix when not using tqdm
-
-
-        # Average the accumulated squared gradients by the total number of samples processed
-        if processed_samples_count == 0:
-            raise ValueError("No samples processed for Fisher computation. Dataloader might be empty.")
-
-        for name in accumulated_fisher:
-            accumulated_fisher[name] /= processed_samples_count
-
-        # Log Fisher statistics and histograms to wandb for detailed analysis
-        all_fisher_values = torch.cat([v.flatten().cpu() for v in accumulated_fisher.values()])
-        
-        # Log min, max, mean, std, median for better numerical understanding
-        if all_fisher_values.numel() > 0:
-            wandb.log({
-                "fisher/all_hist": wandb.Histogram(all_fisher_values),
-                "fisher/min_value": all_fisher_values.min().item(),
-                "fisher/max_value": all_fisher_values.max().item(),
-                "fisher/mean_value": all_fisher_values.mean().item(),
-                "fisher/std_dev": all_fisher_values.std().item(),
-                "fisher/median_value": all_fisher_values.median().item(),
-                "fisher/variance": all_fisher_values.var().item()
-            })
-        else:
-            print("Warning: No Fisher values computed. Ensure parameters require grad or model has parameters.")
-        for param in model.parameters():
-            param.requires_grad = False
-
-        for param in model.head.parameters():
-            param.requires_grad = True
-        model.train() # Set model back to training mode
-        return accumulated_fisher
-
+    
     def reshape_fisher_to_named(self, fisher_flat, model):
         param_sizes = [p.numel() for _, p in model.named_parameters()]
         param_shapes = [p.shape for _, p in model.named_parameters()]
