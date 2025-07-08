@@ -305,6 +305,29 @@ class FederatedLearning:
         
         return self.validate1(self.global_model, val_loader)
     
+    def evaluate_model(self, model, val_loader):
+        model.eval()
+        total_loss = 0
+        correct = 0
+        total = 0
+
+        with torch.no_grad():
+            for inputs, targets in val_loader:
+                inputs, targets = inputs.to(self.device), targets.to(self.device)
+
+                outputs = model(inputs)
+                loss = self.config.loss_function(outputs, targets)
+                total_loss += loss.item() * targets.size(0)
+
+                _, predicted = torch.max(outputs, 1)
+                correct += (predicted == targets).sum().item()
+                total += targets.size(0)
+
+        avg_loss = total_loss / total
+        accuracy = 100* correct / total
+        return avg_loss, accuracy
+
+
 
     def run_federated_learning(self):
 
