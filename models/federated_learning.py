@@ -192,7 +192,7 @@ class FederatedLearning:
             **self.config.optimizer_params
         )
         #0.01
-        optimizer1 = torch.optim.SGD(optimizer_params, lr=0.0001, momentum=0.9, weight_decay=1e-4)
+        optimizer1 = torch.optim.SGD(optimizer_params, lr=0.1, momentum=0.9, weight_decay=1e-4)
 
         scheduler = None
         if self.config.scheduler_class:
